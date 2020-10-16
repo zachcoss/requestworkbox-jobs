@@ -7,6 +7,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const logger = require('morgan');
 const cors = require('cors');
+const jobs = require('./src/services/tools/jobs');
 
 const http = require('http');
 const app = express();
@@ -55,6 +56,7 @@ server.on('listening', function() {
     db.once('open', function () {
         console.log('connected to db')
         console.log('ready')
+        jobs.init()
     });
 });
 
