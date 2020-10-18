@@ -1,27 +1,27 @@
 const 
     cron = require('cron'),
     CronJob = cron.CronJob,
-    ProducerQueue = require('./producerQueue');
+    queueProducer = require('./queueProducer');
 
 module.exports.init = () => {
     console.log('initializing jobs')
 
     // Queue Jobs
-    const queueStandardOld = new CronJob('0 */5 * * * *', function() {
-        console.log('You will see this message every five minutes')
-        ProducerQueue.findQueueDocs('old')
-    })
-    const queueStandardLate = new CronJob('0 */1 * * * *', function() {
-        console.log('You will see this message every minute')
-        ProducerQueue.findQueueDocs('late')
-    })
+    // const queueStandardOld = new CronJob('0 */5 * * * *', function() {
+    //     // console.log('You will see this message every five minutes')
+    //     queueProducer.findQueueDocs('old')
+    // })
+    // const queueStandardLate = new CronJob('0 */1 * * * *', function() {
+    //     // console.log('You will see this message every minute')
+    //     queueProducer.findQueueDocs('late')
+    // })
     const queueStandardCurrent = new CronJob('*/20 * * * * *', function() {
-        console.log('You will see this message every twenty seconds')
-        ProducerQueue.findQueueDocs('current')
+        // console.log('You will see this message every twenty seconds')
+        queueProducer.findQueueDocs('current')
     })
 
-    queueStandardOld.start()
-    queueStandardLate.start()
+    // queueStandardOld.start()
+    // queueStandardLate.start()
     queueStandardCurrent.start()
 
     // const job = new CronJob('*/30 * * * * *', function() {
