@@ -4,7 +4,7 @@ const
     moment = require('moment'),
     IndexSchema = require('../schema/indexSchema'),
     AWS = require('aws-sdk'),
-    QueueStandard = new AWS.SQS({ region: 'us-east-1' });
+    SQS = require('./sqs').SQS;
 
 module.exports = {
     findQueueDocs: async (range) => {
@@ -50,7 +50,7 @@ module.exports = {
         for (sendQueueDocsBatch of sendQueueDocsBatched) {
             try {
                 const sendQueueStart = new Date()
-                const sendQueueBatch = await QueueStandard.sendMessageBatch({
+                const sendQueueBatch = await SQS.sendMessageBatch({
                     QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
                     Entries: sendQueueDocsBatch,
                 }).promise()

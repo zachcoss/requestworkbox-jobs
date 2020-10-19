@@ -14,15 +14,18 @@ const
     }),
     axios = Axios.create({httpAgent: keepAliveAgent}),
     socketService = require('./socket'),
-    S3 = require('../tools/s3').S3;
+    S3 = require('../tools/s3').S3,
+    SQS = require('../tools/sqs').SQS;
 
 module.exports = {
     // incoming fields is the request payload body
     // sent through start-workflow and return-workflow
-    start: async (instanceId, incomingFields) => {
+    start: async (instanceId, queuePayload, bodyPayload) => {
 
         const snapshot = {}
         const state = {
+            bodyPayload: {},
+            queue: {},
             instance: {},
             workflow: {},
             requests: {},
@@ -30,9 +33,45 @@ module.exports = {
         }
 
         const getFunctions = {
+            processQueue: async function() {
+                if (state.queue.status === 'queued') {
+                    // update status
+                    state.queue.status = 'running'
+                    await state.queue.save()
+                } else if (state.queue.status === 'running') {
+                    // update visibility timeout
+                    await SQS.changeMessageVisibility({
+                        QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                        ReceiptHandle: queuePayload.ReceiptHandle,
+                        VisibilityTimeout: 30,
+                    }).promise()
+
+                    throw new Error('Request already in progress')
+                } else if (state.queue.queueType === 'complete' || state.queue.queueType === 'error') {
+                    // delete message
+                    await SQS.deleteMessage({
+                        QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                        ReceiptHandle: queuePayload.ReceiptHandle,
+                    }).promise()
+
+                    throw new Error('Request completed or errored')
+                }
+            },
+            getQueue: async function() {
+                const queue = await indexSchema.Queue.findById(queuePayload.Body)
+                state.queue = queue
+            },
+            getBodyPayload: async function() {
+                // get body payload from storage if queue type
+            },
             getInstance: async function() {
-                const instance = await indexSchema.Instance.findById(instanceId)
-                state.instance = instance
+                if (!instanceId) {
+                    const instance = await indexSchema.Instance.findById(state.queue.instance)
+                    state.instance = instance
+                } else {
+                    const instance = await indexSchema.Instance.findById(instanceId)
+                    state.instance = instance
+                }
             },
             getWorkflow: async function() {
                 const workflow = await indexSchema.Workflow.findById(state.instance.workflow, '', {lean: true})
@@ -145,8 +184,8 @@ module.exports = {
                             })
                         } else if (requestDetailObj.valueType === 'incomingField') {
                             const incomingFieldName = requestDetailObj.value
-                            if (incomingFields[incomingFieldName]) {
-                                requestTemplate[requestDetailKey][requestDetailObj.key] = incomingFields[incomingFieldName]
+                            if (state.bodyPayload[incomingFieldName]) {
+                                requestTemplate[requestDetailKey][requestDetailObj.key] = state.bodyPayload[incomingFieldName]
                             }  
                         }
                     })
@@ -223,7 +262,7 @@ module.exports = {
                     data: requestTemplate.body,
                 }
                 const statConfig = {
-                    instance: instanceId,
+                    instance: state.instance._id,
                     requestName: requestTemplate.url.name,
                     requestType: requestType,
                     requestId: requestTemplate.requestId,
@@ -332,6 +371,8 @@ module.exports = {
         const init = async () => {
 
             // initialize state
+            await getFunctions.getQueue()
+            await getFunctions.getBodyPayload()
             await getFunctions.getInstance()
             await getFunctions.getWorkflow()
 
@@ -383,9 +424,30 @@ module.exports = {
             const finalSnapshot = await init()
             console.log('instance complete')
             // console.log(finalSnapshot)
-            return finalSnapshot
+
+            if (state.queue && state.queue._id) {
+                console.log('saving queue complete')
+                state.queue.status = 'complete'
+                await state.queue.save()
+                await SQS.deleteMessage({
+                    QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                    ReceiptHandle: queuePayload.ReceiptHandle,
+                }).promise()
+            }
+            // return finalSnapshot
         } catch(err) {
             console.log('err', err)
+
+            if (state.queue && state.queue._id) {
+                console.log('saving queue error')
+                state.queue.status = 'error'
+                await state.queue.save()
+                await SQS.deleteMessage({
+                    QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                    ReceiptHandle: queuePayload.ReceiptHandle,
+                }).promise()
+            }
+
             return err
         }
 

@@ -4,8 +4,33 @@ const
     moment = require('moment'),
     IndexSchema = require('../schema/indexSchema'),
     AWS = require('aws-sdk'),
-    QueueStandard = new AWS.SQS({ region: 'us-east-1' });
+    instanceTools = require('./instance'),
+    SQS = require('./sqs').SQS;
 
 module.exports = {
-    
+    receiveMessages: async () => {
+        try {
+            const messagesStart = new Date()
+            const receiveResponse = await SQS.receiveMessage({
+                QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                MaxNumberOfMessages: 10,
+                WaitTimeSeconds: 5,
+                VisibilityTimeout: 10,
+            }).promise()
+
+            console.log(receiveResponse)
+            console.log(`received ${_.size(receiveResponse.Messages)} messages in ${new Date() - messagesStart} seconds`)
+            
+            if (!_.size(receiveResponse.Messages)) {
+                console.log('no messages')
+                return;
+            }
+
+            for (queuePayload of receiveResponse.Messages) {
+                instanceTools.start(null, queuePayload, null)
+            }
+        } catch(err) {
+            console.log('receive messages err ', err)
+        }
+    },
 }
