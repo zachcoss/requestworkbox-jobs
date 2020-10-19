@@ -18,18 +18,6 @@ const KeyValueDefault = () => {
     }
 }
 
-const ScheduleSchema = new mongoose.Schema({
-    active: { type: Boolean, default: true, required: true  },
-    sub: { type: String, required: true },
-    instance: { type: Schema.Types.ObjectId, required: true  },
-    workflow: { type: Schema.Types.ObjectId, required: true  },
-    workflowName: { type: String, required: true  },
-    status: { type: String, required: true },
-    queueType: { type: String, required: true, default: 'schedule' },
-    date: { type: Date, required: true },
-    storage: { type: String },
-}, { timestamps: true })
-
 const QueueSchema = new mongoose.Schema({
     active: { type: Boolean, default: true, required: true  },
     sub: { type: String, required: true },
@@ -185,7 +173,6 @@ const StatSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 module.exports = {
-    'Schedule': new mongoose.model('Schedule', ScheduleSchema),
     'Queue': new mongoose.model('Queue', QueueSchema),
     'Usage': new mongoose.model('Usage', UsageSchema),
     'Billing': new mongoose.model('Billing', BillingSchema),

@@ -18,7 +18,6 @@ module.exports = {
                 VisibilityTimeout: 10,
             }).promise()
 
-            console.log(receiveResponse)
             console.log(`received ${_.size(receiveResponse.Messages)} messages in ${new Date() - messagesStart} seconds`)
             
             if (!_.size(receiveResponse.Messages)) {
@@ -27,7 +26,7 @@ module.exports = {
             }
 
             for (queuePayload of receiveResponse.Messages) {
-                instanceTools.start(null, queuePayload, null)
+                instanceTools.start(queuePayload)
             }
         } catch(err) {
             console.log('receive messages err ', err)

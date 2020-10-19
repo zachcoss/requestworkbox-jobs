@@ -8,7 +8,7 @@ const
 
 module.exports = {
     findQueueDocs: async (range) => {
-        const findPayload = { status: 'received' }
+        const findPayload = { status: 'received', queueType: { $in:  ['queue','schedule'] } }
         const projection = '_id'
 
         if (range === 'old') {
@@ -36,7 +36,6 @@ module.exports = {
         }
 
         // Map and batch queueDocs
-        const sendQueueStart = new Date()
         const sendQueueDocs = _.map(queueDocs, (queueDoc) => {
             const queueDocId = queueDoc._id.toString()
             return {

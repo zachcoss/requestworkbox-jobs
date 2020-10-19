@@ -18,13 +18,25 @@ const
     SQS = require('../tools/sqs').SQS;
 
 module.exports = {
-    // incoming fields is the request payload body
-    // sent through start-workflow and return-workflow
-    start: async (instanceId, queuePayload, bodyPayload) => {
+    start: async (queuePayload, queueDoc) => {
 
+        if (!queuePayload && !queueDoc) {
+            console.log('Missing queue information')
+            throw new Error('Missing queue information')
+        }
+
+        const incoming = {
+            queueId: false,
+            ReceiptHandle: false,
+        }
+        
+        if (!queuePayload && queueDoc._id) incoming.queueId = queueDoc._id
+        if (queuePayload && queuePayload.Body) incoming.queueId = queuePayload.Body
+        if (queuePayload && queuePayload.ReceiptHandle) incoming.ReceiptHandle = queuePayload.ReceiptHandle
+
+        const bodyPayload = {}
         const snapshot = {}
         const state = {
-            bodyPayload: {},
             queue: {},
             instance: {},
             workflow: {},
@@ -32,46 +44,66 @@ module.exports = {
             storages: {},
         }
 
-        const getFunctions = {
+        const queueFunctions = {
+            getQueue: async function() {
+                const queue = await indexSchema.Queue.findById(incoming.queueId)
+                state.queue = queue
+            },
             processQueue: async function() {
                 if (state.queue.status === 'queued') {
                     // update status
                     state.queue.status = 'running'
                     await state.queue.save()
-                } else if (state.queue.status === 'running') {
-                    // update visibility timeout
-                    await SQS.changeMessageVisibility({
-                        QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                        ReceiptHandle: queuePayload.ReceiptHandle,
-                        VisibilityTimeout: 30,
-                    }).promise()
+                } else if (incoming.ReceiptHandle) {
+                    if (state.queue.status === 'running') {
+                        // update visibility timeout
+                        await SQS.changeMessageVisibility({
+                            QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                            ReceiptHandle: incoming.ReceiptHandle,
+                            VisibilityTimeout: 30,
+                        }).promise()
 
-                    throw new Error('Request already in progress')
-                } else if (state.queue.queueType === 'complete' || state.queue.queueType === 'error') {
-                    // delete message
-                    await SQS.deleteMessage({
-                        QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                        ReceiptHandle: queuePayload.ReceiptHandle,
-                    }).promise()
+                        throw new Error('Request already in progress')
+                    } else if (state.queue.queueType === 'complete' || state.queue.queueType === 'error') {
+                        // delete message
+                        await SQS.deleteMessage({
+                            QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                            ReceiptHandle: incoming.ReceiptHandle,
+                        }).promise()
 
-                    throw new Error('Request completed or errored')
+                        throw new Error('Request completed or errored')
+                    } else {
+                        console.log('Queue type not found')
+                        throw new Error('Queue type not found')
+                    }
                 }
-            },
-            getQueue: async function() {
-                const queue = await indexSchema.Queue.findById(queuePayload.Body)
-                state.queue = queue
             },
             getBodyPayload: async function() {
-                // get body payload from storage if queue type
-            },
-            getInstance: async function() {
-                if (!instanceId) {
-                    const instance = await indexSchema.Instance.findById(state.queue.instance)
-                    state.instance = instance
-                } else {
-                    const instance = await indexSchema.Instance.findById(instanceId)
-                    state.instance = instance
+                if (state.queue.storage && state.queue.storage !== '') {
+                    // pull body payload
+                    const storageValue = await S3.getObject({
+                        Bucket: "connector-storage",
+                        Key: `${state.queue.sub}/request-payloads/${state.queue.storage}`,
+                    }).promise()
+                    // set body payload
+                    bodyPayload = JSON.parse(storageValue.Body)
+                    // record usage
+                    const usage = new indexSchema.Usage({
+                        sub: state.queue.sub,
+                        usageType: 'storage',
+                        usageDirection: 'down',
+                        usageAmount: Buffer.byteLength(storageValue.Body, 'utf8'),
+                        usageLocation: 'instance'
+                    })
+                    await usage.save()
                 }
+            },
+        }
+
+        const getFunctions = {
+            getInstance: async function() {
+                const instance = await indexSchema.Instance.findById(state.queue.instance)
+                state.instance = instance
             },
             getWorkflow: async function() {
                 const workflow = await indexSchema.Workflow.findById(state.instance.workflow, '', {lean: true})
@@ -184,8 +216,8 @@ module.exports = {
                             })
                         } else if (requestDetailObj.valueType === 'incomingField') {
                             const incomingFieldName = requestDetailObj.value
-                            if (state.bodyPayload[incomingFieldName]) {
-                                requestTemplate[requestDetailKey][requestDetailObj.key] = state.bodyPayload[incomingFieldName]
+                            if (bodyPayload && bodyPayload[incomingFieldName]) {
+                                requestTemplate[requestDetailKey][requestDetailObj.key] = bodyPayload[incomingFieldName]
                             }  
                         }
                     })
@@ -370,9 +402,12 @@ module.exports = {
 
         const init = async () => {
 
-            // initialize state
-            await getFunctions.getQueue()
-            await getFunctions.getBodyPayload()
+            // initialize queue state
+            await queueFunctions.getQueue()
+            await queueFunctions.processQueue()
+            await queueFunctions.getBodyPayload()
+            
+            // initialize instance state
             await getFunctions.getInstance()
             await getFunctions.getWorkflow()
 
@@ -423,32 +458,33 @@ module.exports = {
             console.log('instance start')
             const finalSnapshot = await init()
             console.log('instance complete')
-            // console.log(finalSnapshot)
 
-            if (state.queue && state.queue._id) {
-                console.log('saving queue complete')
-                state.queue.status = 'complete'
-                await state.queue.save()
+            state.queue.status = 'complete'
+            await state.queue.save()
+
+            if (incoming.ReceiptHandle) {
                 await SQS.deleteMessage({
                     QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                    ReceiptHandle: queuePayload.ReceiptHandle,
+                    ReceiptHandle: incoming.ReceiptHandle,
                 }).promise()
+            } else {
+                return finalSnapshot
             }
-            // return finalSnapshot
+            
         } catch(err) {
             console.log('err', err)
 
-            if (state.queue && state.queue._id) {
-                console.log('saving queue error')
-                state.queue.status = 'error'
-                await state.queue.save()
+            state.queue.status = 'error'
+            await state.queue.save()
+
+            if (incoming.ReceiptHandle) {
                 await SQS.deleteMessage({
                     QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                    ReceiptHandle: queuePayload.ReceiptHandle,
+                    ReceiptHandle: incoming.ReceiptHandle,
                 }).promise()
+            } else {
+                return err
             }
-
-            return err
         }
 
     },
