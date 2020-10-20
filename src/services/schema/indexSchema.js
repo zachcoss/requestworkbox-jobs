@@ -24,8 +24,8 @@ const QueueSchema = new mongoose.Schema({
     instance: { type: Schema.Types.ObjectId, required: true  },
     workflow: { type: Schema.Types.ObjectId, required: true  },
     workflowName: { type: String, required: true  },
-    status: { type: String, required: true },
-    queueType: { type: String, required: true, default: 'queue' },
+    status: { type: String, required: true, enum: ['received', 'queued', 'running', 'complete', 'error'] },
+    queueType: { type: String, required: true, enum: ['queue', 'schedule', 'return'] },
     date: { type: Date, required: true },
     storage: { type: String  },
 }, { timestamps: true })

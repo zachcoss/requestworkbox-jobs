@@ -64,7 +64,7 @@ module.exports = {
                         }).promise()
 
                         throw new Error('Request already in progress')
-                    } else if (state.queue.queueType === 'complete' || state.queue.queueType === 'error') {
+                    } else if (state.queue.status === 'complete' || state.queue.status === 'error') {
                         // delete message
                         await SQS.deleteMessage({
                             QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
@@ -73,8 +73,8 @@ module.exports = {
 
                         throw new Error('Request completed or errored')
                     } else {
-                        console.log('Queue type not found')
-                        throw new Error('Queue type not found')
+                        console.log('Queue status not found')
+                        throw new Error('Queue status not found')
                     }
                 }
             },
