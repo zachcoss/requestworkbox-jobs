@@ -2,7 +2,7 @@ const
     _ = require('lodash'),
     mongoose = require('mongoose'),
     moment = require('moment'),
-    IndexSchema = require('../schema/indexSchema'),
+    IndexSchema = require('@requestworkbox/schema'),
     AWS = require('aws-sdk'),
     instanceTools = require('./instance'),
     SQS = require('./sqs').SQS;

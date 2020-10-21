@@ -2,7 +2,7 @@ const
     _ = require('lodash'),
     moment = require('moment'),
     Axios = require('axios'),
-    indexSchema = require('../schema/indexSchema'),
+    indexSchema = require('@requestworkbox/schema'),
     async = require('async'),
     asyncEachOf = async.eachSeries,
     Agent = require('agentkeepalive'),

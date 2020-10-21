@@ -1,7 +1,7 @@
 const
     _ = require('lodash'),
     mongoose = require('mongoose'),
-    IndexSchema = require('../schema/indexSchema'),
+    IndexSchema = require('@requestworkbox/schema'),
     instanceTools = require('../tools/instance'),
     moment = require('moment'),
     socketService = require('../tools/socket'),
