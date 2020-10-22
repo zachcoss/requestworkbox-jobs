@@ -2,9 +2,9 @@ const
     _ = require('lodash'),
     mongoose = require('mongoose'),
     moment = require('moment'),
-    IndexSchema = require('@requestworkbox/schema'),
+    IndexSchema = require('@requestworkbox/internal-tools').schema,
     AWS = require('aws-sdk'),
-    SQS = require('./sqs').SQS;
+    SQS = require('@requestworkbox/internal-tools').SQS;
 
 module.exports = {
     findQueueDocs: async (range) => {

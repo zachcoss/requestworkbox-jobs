@@ -2,7 +2,7 @@ const
     _ = require('lodash'),
     moment = require('moment'),
     Axios = require('axios'),
-    indexSchema = require('@requestworkbox/schema'),
+    indexSchema = require('@requestworkbox/internal-tools').schema,
     async = require('async'),
     asyncEachOf = async.eachSeries,
     Agent = require('agentkeepalive'),
@@ -13,9 +13,9 @@ const
         freeSocketTimeout: 30000, // free socket keepalive for 30 seconds
     }),
     axios = Axios.create({httpAgent: keepAliveAgent}),
-    socketService = require('./socket'),
-    S3 = require('../tools/s3').S3,
-    SQS = require('../tools/sqs').SQS;
+    socketService = require('@requestworkbox/internal-tools').socket,
+    S3 = require('@requestworkbox/internal-tools').S3,
+    SQS = require('@requestworkbox/internal-tools').SQS;
 
 module.exports = {
     start: async (queuePayload, queueDoc) => {

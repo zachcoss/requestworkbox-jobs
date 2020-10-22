@@ -2,7 +2,7 @@ const
     _ = require('lodash'),
     mongoose = require('mongoose'),
     moment = require('moment'),
-    IndexSchema = require('@requestworkbox/schema'),
+    IndexSchema = require('@requestworkbox/internal-tools').schema,
     instanceTools = require('../tools/instance');
 
 module.exports = {

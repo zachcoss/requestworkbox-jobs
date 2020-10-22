@@ -31,8 +31,8 @@ app.use(jwt.handler)
 
 const server = http.createServer(app);
 
-const socketService = require('./src/services/tools/socket')
-socketService.io = require('socket.io')(server);
+const socketService = require('@requestworkbox/internal-tools').socket
+socketService.io = require('socket.io')(server)
 
 server.on('error', function(error) {
     return new Error('Server error', error)
