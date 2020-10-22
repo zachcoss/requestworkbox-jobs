@@ -2,10 +2,10 @@ const
     _ = require('lodash'),
     mongoose = require('mongoose'),
     moment = require('moment'),
-    IndexSchema = require('@requestworkbox/internal-tools').schema,
+    IndexSchema = require('../tools/schema').schema,
     AWS = require('aws-sdk'),
     instanceTools = require('./instance'),
-    SQS = require('@requestworkbox/internal-tools').SQS;
+    SQS = require('./sqs').SQS;
 
 module.exports = {
     receiveMessages: async () => {

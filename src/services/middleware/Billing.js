@@ -1,10 +1,10 @@
 const
     _ = require('lodash'),
     mongoose = require('mongoose'),
-    IndexSchema = require('@requestworkbox/internal-tools').schema,
+    IndexSchema = require('../tools/schema').schema,
     instanceTools = require('../tools/instance'),
     moment = require('moment'),
-    socketService = require('@requestworkbox/internal-tools').socket,
+    socketService = require('../tools/socket'),
     CronJob = require('cron').CronJob;
 
 module.exports = {
