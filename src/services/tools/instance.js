@@ -500,7 +500,8 @@ module.exports = {
                     ReceiptHandle: incoming.ReceiptHandle,
                 }).promise()
             } else {
-                return err
+                return snapshot
+                // return err
             }
         }
 
