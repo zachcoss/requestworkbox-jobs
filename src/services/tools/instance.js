@@ -228,7 +228,7 @@ module.exports = {
         }
 
         const statFunctions = {
-            createStat: async function(statConfig) {
+            createStat: async function(statConfig, err) {
                 try {
                     console.log('db stat start')
                     const dbStatStart = new Date()
@@ -259,22 +259,23 @@ module.exports = {
                     console.log('s3 stat end', s3StatEnd - s3StatStart)
 
                     console.log('socket start')
-                    const socketStart = new Date()
+
                     // Emit
-                    socketService.io.emit(state.instance.sub, {
-                        eventDetail: 'Running...',
-                        instanceId: state.instance._id,
-                        workflowName: state.workflow.name,
-                        requestName: safeStat.requestName,
-                        statusCode: safeStat.status,
-                        duration: statConfig.duration,
-                        responseSize: statConfig.responseSize,
-                        message: 'Request Complete',
-                    });
-
-                    const socketEnd = new Date()
-                    console.log('socket end', socketEnd - socketStart)
-
+                    if (!err) {
+                        const socketStart = new Date()
+                        socketService.io.emit(state.instance.sub, {
+                            eventDetail: 'Running...',
+                            instanceId: state.instance._id,
+                            workflowName: state.workflow.name,
+                            requestName: safeStat.requestName,
+                            statusCode: safeStat.status,
+                            duration: statConfig.duration,
+                            responseSize: statConfig.responseSize,
+                            message: 'Request Complete',
+                        });
+                        const socketEnd = new Date()
+                        console.log('socket end', socketEnd - socketStart)
+                    }
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
@@ -357,7 +358,23 @@ module.exports = {
 
                     return requestResults
                 } catch(err) {
-                    console.log('request error', err)
+                    console.log('request error', err.message || err.response || err)
+                    socketService.io.emit(state.instance.sub, {
+                        eventDetail: 'Error',
+                        instanceId: state.instance._id,
+                        workflowName: state.workflow.name,
+                        requestName: statConfig.requestName,
+                        statusCode: err.response.status,
+                        duration: '',
+                        responseSize: '',
+                        message: err.response.statusText,
+                    });
+
+                    statConfig.status = err.response.status
+                    statConfig.statusText = err.response.statusText
+                    statConfig.error = true
+
+                    await statFunctions.createStat(statConfig, true)
                     throw new Error(err)
                 }
             },
@@ -472,7 +489,7 @@ module.exports = {
             }
             
         } catch(err) {
-            console.log('err', err)
+            console.log('err', err.message || err.response || err)
 
             state.queue.status = 'error'
             await state.queue.save()
