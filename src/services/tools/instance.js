@@ -272,6 +272,7 @@ module.exports = {
                             duration: statConfig.duration,
                             responseSize: statConfig.responseSize,
                             message: 'Request Complete',
+                            queueDoc: state.queue,
                         });
                         const socketEnd = new Date()
                         console.log('socket end', socketEnd - socketStart)
@@ -368,6 +369,7 @@ module.exports = {
                         duration: '',
                         responseSize: '',
                         message: err.response.statusText,
+                        queueDoc: state.queue,
                     });
 
                     statConfig.status = err.response.status
@@ -437,6 +439,7 @@ module.exports = {
                 duration: '',
                 responseSize: '',
                 message: '',
+                queueDoc: state.queue,
             });
 
             await getFunctions.getRequests()
@@ -452,21 +455,11 @@ module.exports = {
                 duration: '',
                 responseSize: '',
                 message: '',
+                queueDoc: state.queue,
             });
 
             // start workflow
             await startFunctions.startWorkflow()
-
-            socketService.io.emit(state.instance.sub, {
-                eventDetail: 'Complete',
-                instanceId: state.instance._id,
-                workflowName: state.workflow.name,
-                requestName: '',
-                statusCode: '',
-                duration: '',
-                responseSize: '',
-                message: '',
-            });
 
             return snapshot
         }
@@ -478,6 +471,18 @@ module.exports = {
 
             state.queue.status = 'complete'
             await state.queue.save()
+            
+            socketService.io.emit(state.instance.sub, {
+                eventDetail: 'Complete',
+                instanceId: state.instance._id,
+                workflowName: state.workflow.name,
+                requestName: '',
+                statusCode: '',
+                duration: '',
+                responseSize: '',
+                message: '',
+                queueDoc: state.queue,
+            });
 
             if (incoming.ReceiptHandle) {
                 await SQS.deleteMessage({
@@ -493,6 +498,18 @@ module.exports = {
 
             state.queue.status = 'error'
             await state.queue.save()
+
+            socketService.io.emit(state.instance.sub, {
+                eventDetail: 'Error',
+                instanceId: state.instance._id,
+                workflowName: state.workflow.name,
+                requestName: '',
+                statusCode: '',
+                duration: '',
+                responseSize: '',
+                message: '',
+                queueDoc: state.queue,
+            });
 
             if (incoming.ReceiptHandle) {
                 await SQS.deleteMessage({
