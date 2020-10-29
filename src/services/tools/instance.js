@@ -64,7 +64,7 @@ module.exports = {
                         }).promise()
 
                         throw new Error('Request already in progress')
-                    } else if (state.queue.status === 'complete' || state.queue.status === 'error') {
+                    } else if (state.queue.status === 'complete' || state.queue.status === 'error' || state.queue.status === 'archived') {
                         // delete message
                         await SQS.deleteMessage({
                             QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
