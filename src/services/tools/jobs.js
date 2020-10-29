@@ -7,38 +7,18 @@ const
 module.exports.init = () => {
     console.log('initializing jobs')
 
-    // Queue Jobs
-    // queueStandardOld.start()
-    // queueStandardLate.start()
-    // const queueStandardOld = new CronJob('0 */5 * * * *', function() {
-    //     // console.log('You will see this message every five minutes')
-    //     queueProducer.findQueueDocs('old')
-    // })
-    // const queueStandardLate = new CronJob('0 */1 * * * *', function() {
-    //     // console.log('You will see this message every minute')
-    //     queueProducer.findQueueDocs('late')
-    // })
-    const find = new CronJob('*/20 * * * * *', function() {
-        // console.log('You will see this message every twenty seconds')
+    // Move from DB to Queue every 5 seconds
+    const find = new CronJob('*/5 * * * * *', function() {
         queueProducer.findQueueDocs('current')
     }, null, true)
 
-    const consume = new CronJob('*/20 * * * * *', function() {
-        // console.log('You will see this message every twenty seconds')
+    // Pull from Queue every 5 seconds
+    const consume = new CronJob('*/5 * * * * *', function() {
         queueConsumer.receiveMessages()
     }, null, true)
 
+    // Initialize both jobs
     find.start()
     consume.start()
-
-    // const job = new CronJob('*/30 * * * * *', function() {
-    //     console.log('You will see this message every thirty seconds')
-    // })
-    // const job = new CronJob('*/10 * * * * *', function() {
-    //     console.log('You will see this message every ten seconds')
-    // })
-    // const job = new CronJob('* * * * * *', function() {
-    //     console.log('You will see this message every second')
-    // })
     
 }
