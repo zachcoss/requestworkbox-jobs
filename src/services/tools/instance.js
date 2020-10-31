@@ -14,6 +14,7 @@ const
     }),
     axios = Axios.create({httpAgent: keepAliveAgent}),
     socketService = require('../tools/socket'),
+    Stats = require('../tools/stats'),
     S3 = require('./s3').S3,
     SQS = require('./sqs').SQS;
 
@@ -50,32 +51,28 @@ module.exports = {
                 state.queue = queue
             },
             processQueue: async function() {
-                if (state.queue.status === 'queued') {
+                console.log('Queue Status', state.queue.status)
+                const queueStatus = state.queue.status
+                if (queueStatus === 'queued') {
                     // update status
-                    state.queue.status = 'running'
-                    await state.queue.save()
-                } else if (incoming.ReceiptHandle) {
-                    if (state.queue.status === 'running') {
-                        // update visibility timeout
-                        await SQS.changeMessageVisibility({
-                            QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                            ReceiptHandle: incoming.ReceiptHandle,
-                            VisibilityTimeout: 30,
-                        }).promise()
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'starting', })
+                } else if (queueStatus === 'complete' || queueStatus === 'error' || 'archived') {
+                    // delete message
+                    await SQS.deleteMessage({
+                        QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                        ReceiptHandle: incoming.ReceiptHandle,
+                    }).promise()
 
-                        throw new Error('Request already in progress')
-                    } else if (state.queue.status === 'complete' || state.queue.status === 'error' || state.queue.status === 'archived') {
-                        // delete message
-                        await SQS.deleteMessage({
-                            QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                            ReceiptHandle: incoming.ReceiptHandle,
-                        }).promise()
+                    throw new Error('Request completed')
+                } else {
+                    // update visibility timeout
+                    await SQS.changeMessageVisibility({
+                        QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                        ReceiptHandle: incoming.ReceiptHandle,
+                        VisibilityTimeout: 30,
+                    }).promise()
 
-                        throw new Error('Request completed or errored')
-                    } else {
-                        console.log('Queue status not found')
-                        throw new Error('Queue status not found')
-                    }
+                    throw new Error('Request is running')
                 }
             },
             getBodyPayload: async function() {
@@ -230,53 +227,7 @@ module.exports = {
         const statFunctions = {
             createStat: async function(statConfig, err) {
                 try {
-                    console.log('db stat start')
-                    const dbStatStart = new Date()
-                    // Stat for Db
-                    const safeStat = _.omit(statConfig, ['requestPayload','responsePayload', 'headers'])
-                    const dbStat = indexSchema.Stat(safeStat)
-                    await dbStat.save()
-                    const dbStatEnd = new Date()
-                    console.log('db stat end', dbStatEnd - dbStatStart)
-
-                    console.log('instance stat start')
-                    const instanceStatStart = new Date()
-                    state.instance.stats.push(dbStat._id)
-                    await state.instance.save()
-                    const instanceStatEnd = new Date()
-                    console.log('instance stat end', instanceStatEnd - instanceStatStart)
-
-                    console.log('s3 stat start')
-                    const s3StatStart = new Date()
-                    // Stat for S3
-                    const completeStat = _.assign(statConfig, {_id: dbStat._id})
-                    await S3.upload({
-                        Bucket: "connector-storage",
-                        Key: `${state.instance.sub}/instance-statistics/${completeStat.instance}/${completeStat._id}`,
-                        Body: JSON.stringify(completeStat)
-                    }).promise()
-                    const s3StatEnd = new Date()
-                    console.log('s3 stat end', s3StatEnd - s3StatStart)
-
-                    console.log('socket start')
-
-                    // Emit
-                    if (!err) {
-                        const socketStart = new Date()
-                        socketService.io.emit(state.instance.sub, {
-                            eventDetail: 'Running...',
-                            instanceId: state.instance._id,
-                            workflowName: state.workflow.name,
-                            requestName: safeStat.requestName,
-                            statusCode: safeStat.status,
-                            duration: statConfig.duration,
-                            responseSize: statConfig.responseSize,
-                            message: 'Request Complete',
-                            queueDoc: state.queue,
-                        });
-                        const socketEnd = new Date()
-                        console.log('socket end', socketEnd - socketStart)
-                    }
+                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, err })
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
@@ -360,17 +311,8 @@ module.exports = {
                     return requestResults
                 } catch(err) {
                     console.log('request error', err.message || err.response || err)
-                    socketService.io.emit(state.instance.sub, {
-                        eventDetail: 'Error',
-                        instanceId: state.instance._id,
-                        workflowName: state.workflow.name,
-                        requestName: statConfig.requestName,
-                        statusCode: err.response.status,
-                        duration: '',
-                        responseSize: '',
-                        message: err.response.statusText,
-                        queueDoc: state.queue,
-                    });
+
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'error', })
 
                     statConfig.status = err.response.status
                     statConfig.statusText = err.response.statusText
@@ -424,39 +366,21 @@ module.exports = {
             // initialize queue state
             await queueFunctions.getQueue()
             await queueFunctions.processQueue()
-            await queueFunctions.getBodyPayload()
+
+            await Stats.updateQueueStats({ queue: state.queue, status: 'initializing', })
             
             // initialize instance state
             await getFunctions.getInstance()
             await getFunctions.getWorkflow()
 
-            socketService.io.emit(state.instance.sub, {
-                eventDetail: 'Loading...',
-                instanceId: state.instance._id,
-                workflowName: state.workflow.name,
-                requestName: '',
-                statusCode: '',
-                duration: '',
-                responseSize: '',
-                message: '',
-                queueDoc: state.queue,
-            });
-
+            await Stats.updateQueueStats({ queue: state.queue, status: 'loading', })
+            
             await getFunctions.getRequests()
             await getFunctions.getStorages()
             await getFunctions.getStorageDetails()
+            await queueFunctions.getBodyPayload()
 
-            socketService.io.emit(state.instance.sub, {
-                eventDetail: 'Initializing...',
-                instanceId: state.instance._id,
-                workflowName: state.workflow.name,
-                requestName: '',
-                statusCode: '',
-                duration: '',
-                responseSize: '',
-                message: '',
-                queueDoc: state.queue,
-            });
+            await Stats.updateQueueStats({ queue: state.queue, status: 'running', })
 
             // start workflow
             await startFunctions.startWorkflow()
@@ -469,20 +393,7 @@ module.exports = {
             const finalSnapshot = await init()
             console.log('instance complete')
 
-            state.queue.status = 'complete'
-            await state.queue.save()
-            
-            socketService.io.emit(state.instance.sub, {
-                eventDetail: 'Complete',
-                instanceId: state.instance._id,
-                workflowName: state.workflow.name,
-                requestName: '',
-                statusCode: '',
-                duration: '',
-                responseSize: '',
-                message: '',
-                queueDoc: state.queue,
-            });
+            await Stats.updateQueueStats({ queue: state.queue, status: 'complete', })
 
             if (incoming.ReceiptHandle) {
                 await SQS.deleteMessage({
@@ -496,29 +407,21 @@ module.exports = {
         } catch(err) {
             console.log('err', err.message || err.response || err)
 
-            state.queue.status = 'error'
-            await state.queue.save()
-
-            socketService.io.emit(state.instance.sub, {
-                eventDetail: 'Error',
-                instanceId: state.instance._id,
-                workflowName: state.workflow.name,
-                requestName: '',
-                statusCode: '',
-                duration: '',
-                responseSize: '',
-                message: '',
-                queueDoc: state.queue,
-            });
-
-            if (incoming.ReceiptHandle) {
-                await SQS.deleteMessage({
-                    QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                    ReceiptHandle: incoming.ReceiptHandle,
-                }).promise()
+            if (err.message === 'Request completed' || err.message === 'Request is running') {
+                return
             } else {
-                return snapshot
-                // return err
+                // Update stat
+                await Stats.updateQueueStats({ queue: state.queue, status: 'error', })
+                // Delete message or return completed requests
+                if (incoming.ReceiptHandle) {
+                    await SQS.deleteMessage({
+                        QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                        ReceiptHandle: incoming.ReceiptHandle,
+                    }).promise()
+                } else {
+                    return snapshot
+                    // return err
+                }
             }
         }
 

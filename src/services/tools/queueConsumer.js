@@ -15,7 +15,7 @@ module.exports = {
                 QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
                 MaxNumberOfMessages: 10,
                 WaitTimeSeconds: 5,
-                VisibilityTimeout: 10,
+                VisibilityTimeout: 5,
             }).promise()
 
             console.log(`received ${_.size(receiveResponse.Messages)} messages in ${new Date() - messagesStart} seconds`)

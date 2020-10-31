@@ -3,6 +3,7 @@ const
     mongoose = require('mongoose'),
     moment = require('moment'),
     IndexSchema = require('../tools/schema').schema,
+    Stats = require('../tools/stats'),
     instanceTools = require('../tools/instance');
 
 module.exports = {
@@ -16,17 +17,19 @@ module.exports = {
             }
 
             // find queue
-            const findPayload = { status: 'received', _id: req.query.queueid }
-            const projection = '_id'
-            const queueDoc = await IndexSchema.Queue.findOne(findPayload, projection).lean()
+            const findPayload = { status: 'pending', _id: req.query.queueid }
+            const queue = await IndexSchema.Queue.findOne(findPayload)
 
-            if (!queueDoc || !queueDoc._id) {
+            if (!queue || !queue._id) {
                 console.log('Queue not found')
                 return res.status(500).send('Queue not found')
             }
 
+            // Create Queue Pending Stat
+            await Stats.updateQueueStats({ queue, status: 'queued', })
+
             // start immediately
-            const workflowResult = await instanceTools.start(null, queueDoc)
+            const workflowResult = await instanceTools.start(null, queue)
             return res.status(200).send(workflowResult)
         } catch (err) {
             console.log(err)

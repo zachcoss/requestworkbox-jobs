@@ -8,7 +8,7 @@ const
 
 module.exports = {
     findQueueDocs: async (range) => {
-        const findPayload = { status: 'received', queueType: { $in:  ['queue','schedule'] } }
+        const findPayload = { status: 'pending', queueType: { $in:  ['queue','schedule'] } }
         const projection = '_id'
 
         if (range === 'old') {
