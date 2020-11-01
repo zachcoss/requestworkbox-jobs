@@ -51,7 +51,6 @@ module.exports = {
                 state.queue = queue
             },
             processQueue: async function() {
-                console.log('Queue Status', state.queue.status)
                 const queueStatus = state.queue.status
                 if (queueStatus === 'queued') {
                     // update status
@@ -312,8 +311,6 @@ module.exports = {
                 } catch(err) {
                     console.log('request error', err.message || err.response || err)
 
-                    await Stats.updateQueueStats({ queue: state.queue, status: 'error', })
-
                     statConfig.status = err.response.status
                     statConfig.statusText = err.response.statusText
                     statConfig.error = true
@@ -411,7 +408,7 @@ module.exports = {
                 return
             } else {
                 // Update stat
-                await Stats.updateQueueStats({ queue: state.queue, status: 'error', })
+                await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
                 // Delete message or return completed requests
                 if (incoming.ReceiptHandle) {
                     await SQS.deleteMessage({
