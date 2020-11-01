@@ -4,12 +4,12 @@ const
     moment = require('moment'),
     IndexSchema = require('../tools/schema').schema,
     AWS = require('aws-sdk'),
+    Stats = require('./stats'),
     SQS = require('./sqs').SQS;
 
 module.exports = {
     findQueueDocs: async (range) => {
         const findPayload = { status: 'pending', queueType: { $in:  ['queue','schedule'] } }
-        const projection = '_id'
 
         if (range === 'old') {
             findPayload['date'] = { $gt: moment().subtract(5, 'minutes'), $lt: moment(), }
@@ -20,11 +20,8 @@ module.exports = {
         }
 
         try {
-            const findQueueStart = new Date()
-            const queueDocs = await IndexSchema.Queue.find(findPayload, projection).lean()
+            const queueDocs = await IndexSchema.Queue.find(findPayload)
             await module.exports.sendQueueDocs(queueDocs)
-
-            console.log(`completed ${_.size(queueDocs)} docs in ${new Date() - findQueueStart} ms`)
         } catch(err) {
             console.log('find err', err)
         }
@@ -35,7 +32,10 @@ module.exports = {
             return;
         }
 
-        // Map and batch queueDocs
+        // Create Queue Updates/Stats
+        await Stats.batchUpdateQueueStats({ queueDocs, status: 'queued' })
+
+        // Map and batch Queue Docs
         const sendQueueDocs = _.map(queueDocs, (queueDoc) => {
             const queueDocId = queueDoc._id.toString()
             return {
@@ -48,36 +48,13 @@ module.exports = {
         // Batch send and update
         for (sendQueueDocsBatch of sendQueueDocsBatched) {
             try {
-                const sendQueueStart = new Date()
                 const sendQueueBatch = await SQS.sendMessageBatch({
                     QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
                     Entries: sendQueueDocsBatch,
                 }).promise()
-
-                console.log(`sent in ${new Date() - sendQueueStart} ms`)
-
-                await module.exports.updateQueueDocs(sendQueueBatch)
             } catch(err) {
-                console.log('batch err', err)
+                console.log('sendQueueDocs batch err', err)
             }
-        }
-    },
-    updateQueueDocs: async (sendQueueBatch) => {
-        if (!_.size(sendQueueBatch.Successful)) {
-            console.log('no successful')
-            return;
-        }
-        
-        try {
-            const updateQueueStart = new Date()
-            const successfulDocIds = _.map(sendQueueBatch.Successful, 'Id')
-            const successfulQuery = { _id: { $in: successfulDocIds } }
-            const update = { status: 'queued' }
-            const successfulDocs = await IndexSchema.Queue.updateMany(successfulQuery, update)
-
-            console.log(`updated in ${new Date() - updateQueueStart} ms`)
-        } catch(err) {
-            console.log('update err', err)
         }
     },
 }
