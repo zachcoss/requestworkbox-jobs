@@ -112,6 +112,12 @@ module.exports = {
                     const request = await indexSchema.Request.findById(task.requestId, '', {lean: true})
                     state.requests[task.requestId] = request
                 });
+
+                if (state.workflow && state.workflow.webhookRequestId) {
+                    if (state.requests[state.workflow.webhookRequestId]) return; 
+                    const request = await indexSchema.Request.findById(state.workflow.webhookRequestId, '', {lean: true})
+                    state.requests[state.workflow.webhookRequestId] = request
+                }
             },
             getStorages: async function() {
                 await asyncEachOf(state.requests, async function(request) {
@@ -169,7 +175,7 @@ module.exports = {
         }
 
         const templateFunctions = {
-            templateInputs: function(requestId, inputs = {}) {
+            templateInputs: function(requestId) {
                 const requestTemplate = {
                     requestId: requestId,
                     url: {
@@ -236,7 +242,7 @@ module.exports = {
 
         const runFunctions = {
             runRequest: async function(requestTemplate, requestType) {
-                const requestConfig = {
+                let requestConfig = {
                     url: requestTemplate.url.url,
                     method: requestTemplate.url.method,
                     headers: requestTemplate.headers,
@@ -257,11 +263,21 @@ module.exports = {
                     startTime: new Date(),
                     endTime: new Date(),
                 }
+
+                if (requestType === 'webhook') {
+                    if (!_.size(requestConfig.data)) {
+                        requestConfig.data = snapshot
+                    } else {
+                        requestConfig.data['workflowResult'] = snapshot
+                    }
+                }
                 try {
                     const requestStart = new Date()
                     const request = await axios(requestConfig)
                     const requestEnd = new Date()
                     const requestTime = requestEnd - requestStart
+
+                    // Add length and usage for request body (esp. for webhook usage)
 
                     const requestLength = request.config.headers['Content-Length']
                     const responseLength = request.headers['content-length']
@@ -329,7 +345,7 @@ module.exports = {
         const initFunctions = {
             initializeRequest: async function(taskId, requestId, inputs) {
                 // apply inputs
-                const requestTemplate = await templateFunctions.templateInputs(requestId, inputs)
+                const requestTemplate = await templateFunctions.templateInputs(requestId)
                 // initialize snapshot
                 snapshot[taskId] = {
                     request: requestTemplate,
@@ -380,22 +396,45 @@ module.exports = {
             // start workflow
             await startFunctions.startWorkflow()
 
+            if (incoming.ReceiptHandle) {
+                // Delete message
+                await SQS.deleteMessage({
+                    QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                    ReceiptHandle: incoming.ReceiptHandle,
+                }).promise()
+
+                if (state.workflow.webhookRequestId) {
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', })
+                    // Send webhook
+                    await sendWebhook(snapshot)
+                }
+
+                await Stats.updateQueueStats({ queue: state.queue, status: 'complete', })
+            } else {
+                await Stats.updateQueueStats({ queue: state.queue, status: 'complete', })
+            }
+
             return snapshot
+        }
+
+        const sendWebhook = async () => {
+            if (!state.workflow || !state.workflow.webhookRequestId) return;
+
+            const startWebhook = new Date()
+            console.log('sending webhook')
+
+            const requestTemplate = await templateFunctions.templateInputs(state.workflow.webhookRequestId)
+            const requestResponse = await runFunctions.runRequest(requestTemplate, 'webhook')
+
+            console.log('sent webhoook')
+            const endWebhook = new Date()
+            console.log(`Webhook took ${endWebhook - startWebhook} ms`)
         }
 
         try {
             const finalSnapshot = await init()
 
-            await Stats.updateQueueStats({ queue: state.queue, status: 'complete', })
-
-            if (incoming.ReceiptHandle) {
-                await SQS.deleteMessage({
-                    QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
-                    ReceiptHandle: incoming.ReceiptHandle,
-                }).promise()
-            } else {
-                return finalSnapshot
-            }
+            return finalSnapshot
             
         } catch(err) {
             console.log('err', err.message || err.response || err)
@@ -403,17 +442,25 @@ module.exports = {
             if (err.message === 'Request completed' || err.message === 'Request is running') {
                 return
             } else {
-                // Update stat
-                await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
-                // Delete message or return completed requests
                 if (incoming.ReceiptHandle) {
+                    // Delete message
                     await SQS.deleteMessage({
                         QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
                         ReceiptHandle: incoming.ReceiptHandle,
                     }).promise()
+
+                    if (state.workflow.webhookRequestId && state.queue.status === 'webhook') {
+                        // Update stat
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
+                    } else {
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', })
+                        // Send webhook
+                        await sendWebhook(snapshot)
+                    }
                 } else {
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
                     return snapshot
-                    // return err
                 }
             }
         }
