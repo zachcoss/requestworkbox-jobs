@@ -4,7 +4,7 @@ WORKDIR /usr/src/app
 
 ARG NPM_TOKEN
 
-COPY .npmrc .npmrc
+COPY .npmrcprod .npmrc
 
 COPY package*.json ./
 

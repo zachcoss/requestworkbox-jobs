@@ -10,7 +10,6 @@ module.exports = {
     returnWorkflow: async (req, res, next) => {
         try {
             // filter query
-            console.log('Request query ', req.query)
             if (!req.query || !req.query.queueid) {
                 console.log('Missing queue id')
                 return res.status(500).send('Missing queue id')

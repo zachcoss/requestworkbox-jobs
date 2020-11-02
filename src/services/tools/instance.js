@@ -258,12 +258,10 @@ module.exports = {
                     endTime: new Date(),
                 }
                 try {
-                    console.log('request start')
                     const requestStart = new Date()
                     const request = await axios(requestConfig)
                     const requestEnd = new Date()
                     const requestTime = requestEnd - requestStart
-                    console.log('request end', requestTime)
 
                     const requestLength = request.config.headers['Content-Length']
                     const responseLength = request.headers['content-length']
@@ -386,9 +384,7 @@ module.exports = {
         }
 
         try {
-            console.log('instance start')
             const finalSnapshot = await init()
-            console.log('instance complete')
 
             await Stats.updateQueueStats({ queue: state.queue, status: 'complete', })
 
