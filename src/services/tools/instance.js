@@ -2,7 +2,7 @@ const
     _ = require('lodash'),
     moment = require('moment'),
     Axios = require('axios'),
-    indexSchema = require('../tools/schema').schema,
+    IndexSchema = require('../tools/schema').schema,
     async = require('async'),
     asyncEachOf = async.eachSeries,
     Agent = require('agentkeepalive'),
@@ -14,7 +14,7 @@ const
     }),
     axios = Axios.create({httpAgent: keepAliveAgent}),
     socketService = require('../tools/socket'),
-    Stats = require('../tools/stats'),
+    Stats = require('../tools/stats').stats,
     S3 = require('./s3').S3,
     SQS = require('./sqs').SQS;
 
@@ -47,14 +47,14 @@ module.exports = {
 
         const queueFunctions = {
             getQueue: async function() {
-                const queue = await indexSchema.Queue.findById(incoming.queueId)
+                const queue = await IndexSchema.Queue.findById(incoming.queueId)
                 state.queue = queue
             },
             processQueue: async function() {
                 const queueStatus = state.queue.status
                 if (queueStatus === 'queued') {
                     // update status
-                    await Stats.updateQueueStats({ queue: state.queue, status: 'starting', })
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'starting', }, IndexSchema, socketService)
                 } else if (queueStatus === 'complete' || queueStatus === 'error' || 'archived') {
                     // delete message
                     await SQS.deleteMessage({
@@ -84,7 +84,7 @@ module.exports = {
                     // set body payload
                     bodyPayload = JSON.parse(storageValue.Body)
                     // record usage
-                    const usage = new indexSchema.Usage({
+                    const usage = new IndexSchema.Usage({
                         sub: state.queue.sub,
                         usageType: 'storage',
                         usageDirection: 'down',
@@ -98,24 +98,24 @@ module.exports = {
 
         const getFunctions = {
             getInstance: async function() {
-                const instance = await indexSchema.Instance.findById(state.queue.instance)
+                const instance = await IndexSchema.Instance.findById(state.queue.instance)
                 state.instance = instance
             },
             getWorkflow: async function() {
-                const workflow = await indexSchema.Workflow.findById(state.instance.workflow, '', {lean: true})
+                const workflow = await IndexSchema.Workflow.findById(state.instance.workflow, '', {lean: true})
                 state.workflow = workflow
             },
             getRequests: async function() {
                 await asyncEachOf(state.workflow.tasks, async function (task, index) {
                     if (!task.requestId || task.requestId === '') return;
                     if (state.requests[task.requestId]) return;
-                    const request = await indexSchema.Request.findById(task.requestId, '', {lean: true})
+                    const request = await IndexSchema.Request.findById(task.requestId, '', {lean: true})
                     state.requests[task.requestId] = request
                 });
 
                 if (state.workflow && state.workflow.webhookRequestId) {
                     if (state.requests[state.workflow.webhookRequestId]) return; 
-                    const request = await indexSchema.Request.findById(state.workflow.webhookRequestId, '', {lean: true})
+                    const request = await IndexSchema.Request.findById(state.workflow.webhookRequestId, '', {lean: true})
                     state.requests[state.workflow.webhookRequestId] = request
                 }
             },
@@ -125,21 +125,21 @@ module.exports = {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        const storage = await indexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
+                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.headers, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        const storage = await indexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
+                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.body, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
                         
-                        const storage = await indexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
+                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
                         state.storages[obj.value] = storage
                     })
                 })
@@ -162,7 +162,7 @@ module.exports = {
                         }
                     }
 
-                    const usage = new indexSchema.Usage({
+                    const usage = new IndexSchema.Usage({
                         sub: state.instance.sub,
                         usageType: 'storage',
                         usageDirection: 'down',
@@ -232,7 +232,7 @@ module.exports = {
         const statFunctions = {
             createStat: async function(statConfig, err) {
                 try {
-                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, err })
+                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, err }, IndexSchema, S3)
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
@@ -282,7 +282,7 @@ module.exports = {
                     const requestLength = request.config.headers['Content-Length']
                     const responseLength = request.headers['content-length']
 
-                    const requestUsageUp = new indexSchema.Usage({
+                    const requestUsageUp = new IndexSchema.Usage({
                         sub: state.instance.sub,
                         usageType: 'request',
                         usageDirection: 'up',
@@ -291,7 +291,7 @@ module.exports = {
                     })
                     await requestUsageUp.save()
 
-                    const requestUsageDown = new indexSchema.Usage({
+                    const requestUsageDown = new IndexSchema.Usage({
                         sub: state.instance.sub,
                         usageType: 'request',
                         usageDirection: 'down',
@@ -300,7 +300,7 @@ module.exports = {
                     })
                     await requestUsageDown.save()
 
-                    const requestUsageTime = new indexSchema.Usage({
+                    const requestUsageTime = new IndexSchema.Usage({
                         sub: state.instance.sub,
                         usageType: 'request',
                         usageDirection: 'time',
@@ -378,20 +378,20 @@ module.exports = {
             await queueFunctions.getQueue()
             await queueFunctions.processQueue()
 
-            await Stats.updateQueueStats({ queue: state.queue, status: 'initializing', })
+            await Stats.updateQueueStats({ queue: state.queue, status: 'initializing', }, IndexSchema, socketService)
             
             // initialize instance state
             await getFunctions.getInstance()
             await getFunctions.getWorkflow()
 
-            await Stats.updateQueueStats({ queue: state.queue, status: 'loading', })
+            await Stats.updateQueueStats({ queue: state.queue, status: 'loading', }, IndexSchema, socketService)
             
             await getFunctions.getRequests()
             await getFunctions.getStorages()
             await getFunctions.getStorageDetails()
             await queueFunctions.getBodyPayload()
 
-            await Stats.updateQueueStats({ queue: state.queue, status: 'running', })
+            await Stats.updateQueueStats({ queue: state.queue, status: 'running', }, IndexSchema, socketService)
 
             // start workflow
             await startFunctions.startWorkflow()
@@ -404,14 +404,14 @@ module.exports = {
                 }).promise()
 
                 if (state.workflow.webhookRequestId) {
-                    await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', })
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
                     // Send webhook
                     await sendWebhook(snapshot)
                 }
 
-                await Stats.updateQueueStats({ queue: state.queue, status: 'complete', })
+                await Stats.updateQueueStats({ queue: state.queue, status: 'complete', }, IndexSchema, socketService)
             } else {
-                await Stats.updateQueueStats({ queue: state.queue, status: 'complete', })
+                await Stats.updateQueueStats({ queue: state.queue, status: 'complete', }, IndexSchema, socketService)
             }
 
             return snapshot
@@ -451,15 +451,15 @@ module.exports = {
 
                     if (state.workflow.webhookRequestId && state.queue.status === 'webhook') {
                         // Update stat
-                        await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
                     } else {
-                        await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
-                        await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', })
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
                         // Send webhook
                         await sendWebhook(snapshot)
                     }
                 } else {
-                    await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message })
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
                     return snapshot
                 }
             }

@@ -2,9 +2,10 @@ const
     _ = require('lodash'),
     mongoose = require('mongoose'),
     moment = require('moment'),
+    socketService = require('./socket'),
     IndexSchema = require('../tools/schema').schema,
     AWS = require('aws-sdk'),
-    Stats = require('./stats'),
+    Stats = require('../tools/stats').stats,
     SQS = require('./sqs').SQS;
 
 module.exports = {
@@ -33,7 +34,7 @@ module.exports = {
         }
 
         // Create Queue Updates/Stats
-        await Stats.batchUpdateQueueStats({ queueDocs, status: 'queued' })
+        await Stats.batchUpdateQueueStats({ queueDocs, status: 'queued' }, IndexSchema, socketService)
 
         // Map and batch Queue Docs
         const sendQueueDocs = _.map(queueDocs, (queueDoc) => {

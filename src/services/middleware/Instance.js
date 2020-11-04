@@ -2,8 +2,9 @@ const
     _ = require('lodash'),
     mongoose = require('mongoose'),
     moment = require('moment'),
+    socketService = require('../tools/socket'),
     IndexSchema = require('../tools/schema').schema,
-    Stats = require('../tools/stats'),
+    Stats = require('../tools/stats').stats,
     instanceTools = require('../tools/instance');
 
 module.exports = {
@@ -25,7 +26,7 @@ module.exports = {
             }
 
             // Create Queue Pending Stat
-            await Stats.updateQueueStats({ queue, status: 'queued', })
+            await Stats.updateQueueStats({ queue, status: 'queued', }, IndexSchema, socketService)
 
             // start immediately
             const workflowResult = await instanceTools.start(null, queue)
