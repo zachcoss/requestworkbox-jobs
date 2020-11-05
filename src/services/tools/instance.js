@@ -35,7 +35,7 @@ module.exports = {
         if (queuePayload && queuePayload.Body) incoming.queueId = queuePayload.Body
         if (queuePayload && queuePayload.ReceiptHandle) incoming.ReceiptHandle = queuePayload.ReceiptHandle
 
-        const bodyPayload = {}
+        let bodyPayload = {}
         const snapshot = {}
         const state = {
             queue: {},
@@ -77,21 +77,34 @@ module.exports = {
             getBodyPayload: async function() {
                 if (state.queue.storage && state.queue.storage !== '') {
                     // pull body payload
+                    const bodyPayloadStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: "connector-storage",
                         Key: `${state.queue.sub}/request-payloads/${state.queue.storage}`,
                     }).promise()
                     // set body payload
                     bodyPayload = JSON.parse(storageValue.Body)
-                    // record usage
-                    const usage = new IndexSchema.Usage({
-                        sub: state.queue.sub,
+                    const bodyPayloadSize = Buffer.byteLength(JSON.stringify(storageValue.Body), 'utf8')
+
+                    const usages = [{
+                        sub: state.instance.sub,
                         usageType: 'storage',
                         usageDirection: 'down',
-                        usageAmount: Buffer.byteLength(storageValue.Body, 'utf8'),
-                        usageLocation: 'instance'
-                    })
-                    await usage.save()
+                        usageAmount: bodyPayloadSize,
+                        usageMeasurement: 'kb',
+                        usageLocation: 'instance',
+                        usageId: state.instance._id,
+                    }, {
+                        sub: state.instance.sub,
+                        usageType: 'storage',
+                        usageDirection: 'time',
+                        usageAmount: Number(new Date() - bodyPayloadStart),
+                        usageMeasurement: 'ms',
+                        usageLocation: 'instance',
+                        usageId: state.instance._id,
+                    }]
+        
+                    await Stats.updateInstanceUsage({ instance: state.instance, usages, }, IndexSchema)
                 }
             },
         }
@@ -146,6 +159,7 @@ module.exports = {
             },
             getStorageDetails: async function() {
                 await asyncEachOf(state.storages, async function(storage) {
+                    const storageValueStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: "connector-storage",
                         Key: `${state.instance.sub}/storage/${storage._id}`,
@@ -162,14 +176,27 @@ module.exports = {
                         }
                     }
 
-                    const usage = new IndexSchema.Usage({
+                    const storageValueSize = Buffer.byteLength(JSON.stringify(storage.storageValue), 'utf8')
+
+                    const usages = [{
                         sub: state.instance.sub,
                         usageType: 'storage',
                         usageDirection: 'down',
-                        usageAmount: Number(storage.size),
-                        usageLocation: 'instance'
-                    })
-                    await usage.save()
+                        usageAmount: storageValueSize,
+                        usageMeasurement: 'kb',
+                        usageLocation: 'instance',
+                        usageId: state.instance._id,
+                    }, {
+                        sub: state.instance.sub,
+                        usageType: 'storage',
+                        usageDirection: 'time',
+                        usageAmount: Number(new Date() - storageValueStart),
+                        usageMeasurement: 'ms',
+                        usageLocation: 'instance',
+                        usageId: state.instance._id,
+                    }]
+        
+                    await Stats.updateInstanceUsage({ instance: state.instance, usages, }, IndexSchema)
                 })
             }
         }
@@ -251,6 +278,15 @@ module.exports = {
                     // axios requires data field rather than body
                     data: requestTemplate.body,
                 }
+
+                if (requestType === 'webhook') {
+                    if (!_.size(requestConfig.data)) {
+                        requestConfig.data = snapshot
+                    } else {
+                        requestConfig.data['workflowResult'] = snapshot
+                    }
+                }
+
                 const statConfig = {
                     instance: state.instance._id,
                     requestName: requestTemplate.url.name,
@@ -263,60 +299,57 @@ module.exports = {
                     startTime: new Date(),
                     endTime: new Date(),
                 }
-
-                if (requestType === 'webhook') {
-                    if (!_.size(requestConfig.data)) {
-                        requestConfig.data = snapshot
-                    } else {
-                        requestConfig.data['workflowResult'] = snapshot
-                    }
-                }
+                
                 try {
-                    const requestStart = new Date()
-                    const request = await axios(requestConfig)
-                    const requestEnd = new Date()
-                    const requestTime = requestEnd - requestStart
 
-                    // Add length and usage for request body (esp. for webhook usage)
+                    const requestLengthSize = Buffer.byteLength(JSON.stringify(requestConfig), 'utf8')
 
-                    const requestLength = request.config.headers['Content-Length']
-                    const responseLength = request.headers['content-length']
-
-                    const requestUsageUp = new IndexSchema.Usage({
+                    const requestUsages = [{
                         sub: state.instance.sub,
                         usageType: 'request',
                         usageDirection: 'up',
-                        usageAmount: Number(requestLength),
-                        usageLocation: 'instance'
-                    })
-                    await requestUsageUp.save()
+                        usageAmount: requestLengthSize,
+                        usageMeasurement: 'kb',
+                        usageLocation: 'instance',
+                        usageId: state.instance._id,
+                    }]
+        
+                    await Stats.updateInstanceUsage({ instance: state.instance, usages: requestUsages, }, IndexSchema)
 
-                    const requestUsageDown = new IndexSchema.Usage({
+                    const requestStart = new Date()
+                    const request = await axios(requestConfig)
+                    const requestEnd = new Date()
+                    const requestResultTime = requestEnd - requestStart
+
+                    const requestResults = _.pick(request, ['data', 'status', 'statusText','headers'])
+                    const resultLengthSize = Buffer.byteLength(JSON.stringify(requestResults), 'utf8')
+
+                    const responseUsages = [{
                         sub: state.instance.sub,
                         usageType: 'request',
                         usageDirection: 'down',
-                        usageAmount: Number(responseLength),
-                        usageLocation: 'instance'
-                    })
-                    await requestUsageDown.save()
-
-                    const requestUsageTime = new IndexSchema.Usage({
+                        usageAmount: resultLengthSize,
+                        usageMeasurement: 'kb',
+                        usageLocation: 'instance',
+                        usageId: state.instance._id,
+                    }, {
                         sub: state.instance.sub,
                         usageType: 'request',
                         usageDirection: 'time',
-                        usageAmount: Number(requestTime),
-                        usageLocation: 'instance'
-                    })
-                    await requestUsageTime.save()
+                        usageAmount: requestResultTime,
+                        usageMeasurement: 'ms',
+                        usageLocation: 'instance',
+                        usageId: state.instance._id,
+                    }]
+        
+                    await Stats.updateInstanceUsage({ instance: state.instance, usages: responseUsages, }, IndexSchema)
 
-                    const requestResults = _.pick(request, ['data', 'status', 'statusText','headers'])
-                    
                     statConfig.responsePayload = requestResults.data
                     statConfig.status = requestResults.status
                     statConfig.statusText = requestResults.statusText
                     statConfig.endTime = new Date()
-                    statConfig.duration = requestEnd - requestStart
-                    statConfig.responseSize = requestResults.headers['content-length']
+                    statConfig.duration = requestResultTime
+                    statConfig.responseSize = resultLengthSize
                     statConfig.responseType = requestResults.headers['content-type']
 
                     await statFunctions.createStat(statConfig)
