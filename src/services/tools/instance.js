@@ -91,9 +91,10 @@ module.exports = {
                         usageType: 'storage',
                         usageDirection: 'down',
                         usageAmount: bodyPayloadSize,
-                        usageMeasurement: 'kb',
+                        usageMeasurement: 'byte',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
+                        usageDetail: `Body payload download`,
                     }, {
                         sub: state.instance.sub,
                         usageType: 'storage',
@@ -102,6 +103,7 @@ module.exports = {
                         usageMeasurement: 'ms',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
+                        usageDetail: `Body payload download`,
                     }]
         
                     await Stats.updateInstanceUsage({ instance: state.instance, usages, }, IndexSchema)
@@ -138,21 +140,21 @@ module.exports = {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
+                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.headers, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
+                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.body, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
                         
-                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size', {lean: true})
+                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                 })
@@ -183,9 +185,10 @@ module.exports = {
                         usageType: 'storage',
                         usageDirection: 'down',
                         usageAmount: storageValueSize,
-                        usageMeasurement: 'kb',
+                        usageMeasurement: 'byte',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
+                        usageDetail: `Storage download: ${storage.name}`,
                     }, {
                         sub: state.instance.sub,
                         usageType: 'storage',
@@ -194,6 +197,7 @@ module.exports = {
                         usageMeasurement: 'ms',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
+                        usageDetail: `Storage download: ${storage.name}`,
                     }]
         
                     await Stats.updateInstanceUsage({ instance: state.instance, usages, }, IndexSchema)
@@ -309,9 +313,10 @@ module.exports = {
                         usageType: 'request',
                         usageDirection: 'up',
                         usageAmount: requestLengthSize,
-                        usageMeasurement: 'kb',
+                        usageMeasurement: 'byte',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
+                        usageDetail: `Request: ${statConfig.requestName}`,
                     }]
         
                     await Stats.updateInstanceUsage({ instance: state.instance, usages: requestUsages, }, IndexSchema)
@@ -329,9 +334,10 @@ module.exports = {
                         usageType: 'request',
                         usageDirection: 'down',
                         usageAmount: resultLengthSize,
-                        usageMeasurement: 'kb',
+                        usageMeasurement: 'byte',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
+                        usageDetail: `Response: ${statConfig.requestName}`,
                     }, {
                         sub: state.instance.sub,
                         usageType: 'request',
@@ -340,6 +346,7 @@ module.exports = {
                         usageMeasurement: 'ms',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
+                        usageDetail: `Response: ${statConfig.requestName}`,
                     }]
         
                     await Stats.updateInstanceUsage({ instance: state.instance, usages: responseUsages, }, IndexSchema)
