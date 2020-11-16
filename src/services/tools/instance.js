@@ -86,6 +86,8 @@ module.exports = {
                     bodyPayload = JSON.parse(storageValue.Body)
                     const bodyPayloadSize = Buffer.byteLength(JSON.stringify(storageValue.Body), 'utf8')
 
+                    const requestResultTime = new Date() - bodyPayloadStart
+
                     const usages = [{
                         sub: state.instance.sub,
                         usageType: 'storage',
@@ -99,7 +101,7 @@ module.exports = {
                         sub: state.instance.sub,
                         usageType: 'storage',
                         usageDirection: 'time',
-                        usageAmount: Number(new Date() - bodyPayloadStart),
+                        usageAmount: Number(requestResultTime),
                         usageMeasurement: 'ms',
                         usageLocation: 'instance',
                         usageId: state.instance._id,
@@ -107,6 +109,26 @@ module.exports = {
                     }]
         
                     await Stats.updateInstanceUsage({ instance: state.instance, usages, }, IndexSchema)
+
+                    // Create stat
+
+                    const statConfig = {
+                        instance: state.instance._id,
+                        requestName: `Body Payload`,
+                        requestType: 'bodyPayload',
+                        requestId: state.queue.storage,
+                        requestPayload: {},
+                        responsePayload: bodyPayload,
+                        status: 200,
+                        statusText: 'OK',
+                        startTime: bodyPayloadStart,
+                        endTime: new Date(),
+                        duration: Number(requestResultTime),
+                        responseSize: bodyPayloadSize,
+                    }
+
+                    await statFunctions.createStat(statConfig)
+
                 }
             },
         }
@@ -261,9 +283,9 @@ module.exports = {
         }
 
         const statFunctions = {
-            createStat: async function(statConfig, err) {
+            createStat: async function(statConfig) {
                 try {
-                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, err }, IndexSchema, S3)
+                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3)
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
@@ -351,6 +373,7 @@ module.exports = {
         
                     await Stats.updateInstanceUsage({ instance: state.instance, usages: responseUsages, }, IndexSchema)
 
+                    statConfig.requestSize = requestLengthSize
                     statConfig.responsePayload = requestResults.data
                     statConfig.status = requestResults.status
                     statConfig.statusText = requestResults.statusText
@@ -369,7 +392,7 @@ module.exports = {
                     statConfig.statusText = err.response.statusText
                     statConfig.error = true
 
-                    await statFunctions.createStat(statConfig, true)
+                    await statFunctions.createStat(statConfig)
                     throw new Error(err)
                 }
             },
