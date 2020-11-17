@@ -17,7 +17,7 @@ module.exports = {
             }
 
             // find queue
-            const findPayload = { status: 'pending', _id: req.query.queueid }
+            const findPayload = { _id: req.query.queueid, sub: req.user.sub, status: 'pending', }
             const queue = await IndexSchema.Queue.findOne(findPayload)
 
             if (!queue || !queue._id) {

@@ -135,24 +135,30 @@ module.exports = {
 
         const getFunctions = {
             getInstance: async function() {
-                const instance = await IndexSchema.Instance.findById(state.queue.instance)
+                // Add sub
+                const instance = await IndexSchema.Instance.findOne({ _id: state.queue.instance, sub: state.queue.sub })
                 state.instance = instance
             },
             getWorkflow: async function() {
-                const workflow = await IndexSchema.Workflow.findById(state.instance.workflow, '', {lean: true})
+                // Add sub
+                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflow, sub: state.queue.sub }, '', {lean: true})
                 state.workflow = workflow
             },
             getRequests: async function() {
+                // Requests
                 await asyncEachOf(state.workflow.tasks, async function (task, index) {
                     if (!task.requestId || task.requestId === '') return;
                     if (state.requests[task.requestId]) return;
-                    const request = await IndexSchema.Request.findById(task.requestId, '', {lean: true})
+                    // Add sub
+                    const request = await IndexSchema.Request.findOne({ _id: task.requestId, sub: state.queue.sub }, '', {lean: true})
                     state.requests[task.requestId] = request
                 });
 
+                // Webhook Request
                 if (state.workflow && state.workflow.webhookRequestId) {
                     if (state.requests[state.workflow.webhookRequestId]) return; 
-                    const request = await IndexSchema.Request.findById(state.workflow.webhookRequestId, '', {lean: true})
+                    // Add sub
+                    const request = await IndexSchema.Request.findOne({ _id: state.workflow.webhookRequestId, sub: state.queue.sub }, '', {lean: true})
                     state.requests[state.workflow.webhookRequestId] = request
                 }
             },
@@ -162,21 +168,24 @@ module.exports = {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size name', {lean: true})
+                        // Add sub
+                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value, sub: state.queue.sub }, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.headers, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size name', {lean: true})
+                        // Add sub
+                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value, sub: state.queue.sub }, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.body, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
                         
-                        const storage = await IndexSchema.Storage.findById(obj.value, 'storageType mimetype size name', {lean: true})
+                        // Add sub
+                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value, sub: state.queue.sub }, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                 })
@@ -400,7 +409,6 @@ module.exports = {
 
         const processFunctions = {
             processRequestResponse: async function(requestResponse, taskId) {
-                // console.log('request response', requestResponse)
                 snapshot[taskId].response = requestResponse.data
             },
         }
