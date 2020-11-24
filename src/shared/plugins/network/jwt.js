@@ -5,7 +5,7 @@ const
     jwksAud = `${process.env.API_AWS_USER_POOL_CLIENT}`,
     jwksIss = `https://cognito-idp.us-east-1.amazonaws.com/${process.env.API_AWS_USER_POOL}`,
     jwksAlg = ['RS256'],
-    pathExceptions = ['/'];
+    pathExceptions = ['/', '/return-workflow', ];
 
 /**
  * 
