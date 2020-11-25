@@ -16,16 +16,15 @@ module.exports = {
             if ((!req.user || !req.user.sub) && !req.headers['x-api-key']) {
                 return res.status(401).send('user not found')
             } else if (req.headers['x-api-key']) {
-
-                // Only accept requests from api
-                const referer = req.headers['referer'].split('/return-workflow')[0]
-                if (!_.includes(referer, 'http://localhost:3000') || !_.includes(referer, 'https://api.requestworkbox.com')) {
-                    return res.status(401).send('Incorrect referer')
-                }
                 
                 const uuid = req.headers['x-api-key']
                 const snippet = uuid.substring(0,8)
                 const token = await IndexSchema.Token.findOne({ snippet, active: true, })
+
+                if (!token || !token._id) {
+                    return res.status(401).send('token not found')
+                }
+                
                 const validToken = await passwordHash.compare(uuid, token.hash)
                 
                 req.user = { sub: token.sub }
