@@ -79,7 +79,7 @@ module.exports = {
                     // pull body payload
                     const bodyPayloadStart = new Date()
                     const storageValue = await S3.getObject({
-                        Bucket: "connector-storage",
+                        Bucket: process.env.STORAGE_BUCKET,
                         Key: `${state.queue.sub}/request-payloads/${state.queue.storage}`,
                     }).promise()
                     // set body payload
@@ -194,7 +194,7 @@ module.exports = {
                 await asyncEachOf(state.storages, async function(storage) {
                     const storageValueStart = new Date()
                     const storageValue = await S3.getObject({
-                        Bucket: "connector-storage",
+                        Bucket: process.env.STORAGE_BUCKET,
                         Key: `${state.instance.sub}/storage/${storage._id}`,
                     }).promise()
 
@@ -294,7 +294,7 @@ module.exports = {
         const statFunctions = {
             createStat: async function(statConfig) {
                 try {
-                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3)
+                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
