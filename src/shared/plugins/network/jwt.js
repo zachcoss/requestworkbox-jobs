@@ -5,7 +5,7 @@ const
     jwksAud = `${process.env.API_AWS_USER_POOL_CLIENT}`,
     jwksIss = `https://cognito-idp.us-east-1.amazonaws.com/${process.env.API_AWS_USER_POOL}`,
     jwksAlg = ['RS256'],
-    pathExceptions = ['/', '/return-workflow', ];
+    _ = require('lodash');
 
 /**
  * 
@@ -17,7 +17,7 @@ module.exports.config = () => {
         secret: jwksRsa.expressJwtSecret({
             cache: true,
             rateLimit: true,
-            jwksRequestsPerMinute: 5,
+            jwksRequestsPerMinute: 10,
             jwksUri: jwksUri
         }),
         // allows access token instead of id token
@@ -25,7 +25,18 @@ module.exports.config = () => {
         issuer: jwksIss,
         algorithms: jwksAlg
     })
-    .unless({ path: pathExceptions })
+    .unless({
+        custom: function(req) {
+            if (req.path === '/') {
+                return true
+            } else if (_.includes(req.path, '/return-workflow')) {
+                if (req.headers['x-api-key']) return true
+                else return false
+            } else {
+                return false
+            }
+        },
+    })
 }
 
 /**
