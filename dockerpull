@@ -1,0 +1,3 @@
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 415786489759.dkr.ecr.us-east-1.amazonaws.com
+docker pull 415786489759.dkr.ecr.us-east-1.amazonaws.com/requestworkbox/jobs
+docker ps
