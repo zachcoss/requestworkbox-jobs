@@ -10,7 +10,7 @@ const
 
 module.exports = {
     findQueueDocs: async (range) => {
-        const findPayload = { status: 'pending', queueType: { $in:  ['queue','schedule'] } }
+        const findPayload = { status: 'pending', queueType: { $in:  ['queue','schedule','statuscheck'] } }
 
         if (range === 'old') {
             findPayload['date'] = { $gt: moment().subtract(5, 'minutes'), $lt: moment(), }
@@ -41,7 +41,7 @@ module.exports = {
             const queueDocId = queueDoc._id.toString()
             return {
                 Id: queueDocId,
-                MessageBody: queueDocId,
+                MessageBody: `${queueDocId} ${moment(queueDoc.date).toISOString()}`,
             }
         })
         const sendQueueDocsBatched = _.chunk(sendQueueDocs, 10)

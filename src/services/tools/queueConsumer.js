@@ -1,5 +1,7 @@
 const 
     _ = require('lodash'),
+    cron = require('cron'),
+    CronJob = cron.CronJob,
     mongoose = require('mongoose'),
     moment = require('moment'),
     IndexSchema = require('../tools/schema').schema,
@@ -8,6 +10,7 @@ const
     SQS = require('./sqs').SQS;
 
 module.exports = {
+    existingMessages: {},
     receiveMessages: async () => {
         try {
             const messagesStart = new Date()
@@ -26,7 +29,19 @@ module.exports = {
             }
 
             for (queuePayload of receiveResponse.Messages) {
-                instanceTools.start(queuePayload)
+                const queuePayloadSplit = queuePayload.Body.split(' ')
+                const queueId = queuePayloadSplit[0]
+                const queueDate = moment(queuePayloadSplit[1]).toDate()
+
+                if (!module.exports.existingMessages[queueId]) {
+                    module.exports.existingMessages[queueId] = queueDate
+                    const job = new CronJob(queueDate, function() {
+                        instanceTools.start(queuePayload)
+                    }, null)
+                    job.start()
+                } else {
+                    console.log('already in queue')
+                }
             }
         } catch(err) {
             console.log('receive messages err ', err)

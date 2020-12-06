@@ -19,7 +19,7 @@ const
     SQS = require('./sqs').SQS;
 
 module.exports = {
-    start: async (queuePayload, queueDoc) => {
+    start: async (queuePayload, queueDoc, messageSettings) => {
 
         if (!queuePayload && !queueDoc) {
             console.log('Missing queue information')
@@ -32,7 +32,7 @@ module.exports = {
         }
         
         if (!queuePayload && queueDoc._id) incoming.queueId = queueDoc._id
-        if (queuePayload && queuePayload.Body) incoming.queueId = queuePayload.Body
+        if (queuePayload && queuePayload.Body) incoming.queueId = queuePayload.Body.split(' ')[0]
         if (queuePayload && queuePayload.ReceiptHandle) incoming.ReceiptHandle = queuePayload.ReceiptHandle
 
         let bodyPayload = {}
@@ -43,6 +43,7 @@ module.exports = {
             workflow: {},
             requests: {},
             storages: {},
+            statuscheck: {},
         }
 
         const queueFunctions = {
@@ -72,6 +73,12 @@ module.exports = {
                     }).promise()
 
                     throw new Error('Request is running')
+                }
+            },
+            getStatuscheck: async function() {
+                if (state.queue.queueType === 'statuscheck') {
+                    const statuscheck = await IndexSchema.Statuscheck.findOne(state.queue.statuscheckId)
+                    state.statuscheck = statuscheck
                 }
             },
             getBodyPayload: async function() {
@@ -294,7 +301,11 @@ module.exports = {
         const statFunctions = {
             createStat: async function(statConfig) {
                 try {
-                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
+                    if (state.statuscheck && state.statuscheck._id) {
+                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET, socketService, state.statuscheck)
+                    } else {
+                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
+                    }
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
@@ -450,6 +461,9 @@ module.exports = {
             await queueFunctions.processQueue()
 
             await Stats.updateQueueStats({ queue: state.queue, status: 'initializing', }, IndexSchema, socketService)
+
+            // get status check
+            await queueFunctions.getStatuscheck()
             
             // initialize instance state
             await getFunctions.getInstance()
@@ -468,15 +482,18 @@ module.exports = {
             await startFunctions.startWorkflow()
 
             if (incoming.ReceiptHandle) {
+                console.log('deleting receipt handle')
                 // Delete message
                 await SQS.deleteMessage({
                     QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
                     ReceiptHandle: incoming.ReceiptHandle,
                 }).promise()
 
+                console.log('deleted receipt handle', incoming.ReceiptHandle)
+
+                // Send webhook
                 if (state.workflow.webhookRequestId) {
                     await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                    // Send webhook
                     await sendWebhook(snapshot)
                 }
 
