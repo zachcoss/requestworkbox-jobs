@@ -19,7 +19,7 @@ const
     SQS = require('./sqs').SQS;
 
 module.exports = {
-    start: async (queuePayload, queueDoc, messageSettings) => {
+    start: async (queuePayload, queueDoc, messageAction) => {
 
         if (!queuePayload && !queueDoc) {
             console.log('Missing queue information')
@@ -34,6 +34,17 @@ module.exports = {
         if (!queuePayload && queueDoc._id) incoming.queueId = queueDoc._id
         if (queuePayload && queuePayload.Body) incoming.queueId = queuePayload.Body.split(' ')[0]
         if (queuePayload && queuePayload.ReceiptHandle) incoming.ReceiptHandle = queuePayload.ReceiptHandle
+
+        if (messageAction === 'extend' && incoming.ReceiptHandle) {
+            // update visibility timeout
+            await SQS.changeMessageVisibility({
+                QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
+                ReceiptHandle: incoming.ReceiptHandle,
+                VisibilityTimeout: 30,
+            }).promise()
+
+            throw new Error('Request is running')
+        }
 
         let bodyPayload = {}
         const snapshot = {}
@@ -408,19 +419,32 @@ module.exports = {
                 } catch(err) {
                     console.log('request error', err.message || err.response || err)
 
-                    statConfig.status = err.response.status
-                    statConfig.statusText = err.response.statusText
+                    statConfig.status = (err.response && err.response.status) ? err.response.status : 500
+                    statConfig.statusText = (err.response && err.response.statusText) ? err.response.statusText : err.message
                     statConfig.error = true
 
                     await statFunctions.createStat(statConfig)
-                    throw new Error(err)
+
+                    if (state.statuscheck) {
+                        if (state.statuscheck && state.statuscheck.onWorkflowTaskError && state.statuscheck.onWorkflowTaskError === 'continue') {
+                            console.log('continue after error')
+                        } else {
+                            throw new Error(err)
+                        }
+                    } else {
+                        throw new Error(err)
+                    }
                 }
             },
         }
 
         const processFunctions = {
             processRequestResponse: async function(requestResponse, taskId) {
-                snapshot[taskId].response = requestResponse.data
+                if (requestResponse && requestResponse.data) {
+                    snapshot[taskId].response = requestResponse.data
+                } else {
+                    snapshot[taskId].response = 'Error'
+                }
             },
         }
 
@@ -482,19 +506,26 @@ module.exports = {
             await startFunctions.startWorkflow()
 
             if (incoming.ReceiptHandle) {
-                console.log('deleting receipt handle')
                 // Delete message
                 await SQS.deleteMessage({
                     QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
                     ReceiptHandle: incoming.ReceiptHandle,
                 }).promise()
 
-                console.log('deleted receipt handle', incoming.ReceiptHandle)
-
                 // Send webhook
                 if (state.workflow.webhookRequestId) {
-                    await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                    await sendWebhook(snapshot)
+                    if (state.statuscheck && state.statuscheck.sendWorkflowWebhook) {
+                        if (state.statuscheck.sendWorkflowWebhook === 'always') {
+                            await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                            await sendWebhook(snapshot)
+                        } else if  (state.statuscheck.sendWorkflowWebhook === 'onSuccess') {
+                            await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                            await sendWebhook(snapshot)
+                        }
+                    } else {
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                        await sendWebhook(snapshot)
+                    }
                 }
 
                 await Stats.updateQueueStats({ queue: state.queue, status: 'complete', }, IndexSchema, socketService)
@@ -542,9 +573,20 @@ module.exports = {
                         await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
                     } else {
                         await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
-                        await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                        
                         // Send webhook
-                        await sendWebhook(snapshot)
+                        if (state.statuscheck && state.statuscheck.sendWorkflowWebhook) {
+                            if (state.statuscheck.sendWorkflowWebhook === 'always') {
+                                await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                                await sendWebhook(snapshot)
+                            } else if  (state.statuscheck.sendWorkflowWebhook === 'onError') {
+                                await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                                await sendWebhook(snapshot)
+                            }
+                        } else {
+                            await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                            await sendWebhook(snapshot)
+                        }
                     }
                 } else {
                     await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
