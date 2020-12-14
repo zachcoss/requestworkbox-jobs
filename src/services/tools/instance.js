@@ -258,11 +258,14 @@ module.exports = {
             templateInputs: function(requestId) {
                 const requestTemplate = {
                     requestId: requestId,
-                    url: {
-                        method: '',
-                        url: '',
-                        name: ''
-                    },
+                    url: '',
+                    method: '',
+                    name: '',
+                    // url: {
+                    //     method: '',
+                    //     url: '',
+                    //     name: ''
+                    // },
                     query: {},
                     headers: {},
                     body: {}
@@ -271,12 +274,9 @@ module.exports = {
                 const request = state.requests[requestId]
                 const requestDetails = _.pick(request, ['query','headers','body'])
 
-                
-
-                // Apply url
-                _.each(request.url, (value, key) => {
-                    requestTemplate.url[key] = value
-                })
+                requestTemplate.url = request.url
+                requestTemplate.name = request.name
+                requestTemplate.method = request.method
 
                 // Apply inputs
                 _.each(requestDetails, (requestDetailArray, requestDetailKey) => {
@@ -292,7 +292,7 @@ module.exports = {
                         } else if (requestDetailObj.valueType === 'runtimeResult') {
                             const runtimeResultName = requestDetailObj.value
                             _.each(snapshot, (task) => {
-                                if (task.request.url.name === runtimeResultName) {
+                                if (task.request.name === runtimeResultName) {
                                     requestTemplate[requestDetailKey][requestDetailObj.key] = task.response
                                 }
                             })
@@ -327,8 +327,8 @@ module.exports = {
         const runFunctions = {
             runRequest: async function(requestTemplate, requestType) {
                 let requestConfig = {
-                    url: requestTemplate.url.url,
-                    method: requestTemplate.url.method,
+                    url: requestTemplate.url,
+                    method: requestTemplate.method,
                     headers: requestTemplate.headers,
                     // axios requires params field rather than query
                     params: requestTemplate.query,
@@ -346,7 +346,7 @@ module.exports = {
 
                 const statConfig = {
                     instance: state.instance._id,
-                    requestName: requestTemplate.url.name,
+                    requestName: requestTemplate.name,
                     requestType: requestType,
                     requestId: requestTemplate.requestId,
                     requestPayload: requestConfig,
