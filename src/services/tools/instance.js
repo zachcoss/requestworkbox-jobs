@@ -93,12 +93,12 @@ module.exports = {
                 }
             },
             getBodyPayload: async function() {
-                if (state.queue.storage && state.queue.storage !== '') {
+                if (state.queue.storageInstanceId && state.queue.storageInstanceId !== '') {
                     // pull body payload
                     const bodyPayloadStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: process.env.STORAGE_BUCKET,
-                        Key: `${state.queue.sub}/request-payloads/${state.queue.storage}`,
+                        Key: `${state.queue.sub}/request-payloads/${state.queue.storageInstanceId}`,
                     }).promise()
                     // set body payload
                     bodyPayload = JSON.parse(storageValue.Body)
@@ -134,7 +134,7 @@ module.exports = {
                         instance: state.instance._id,
                         requestName: `Body Payload`,
                         requestType: 'bodyPayload',
-                        requestId: state.queue.storage,
+                        requestId: state.queue.storageInstanceId,
                         requestPayload: {},
                         responsePayload: bodyPayload,
                         status: 200,
@@ -154,12 +154,12 @@ module.exports = {
         const getFunctions = {
             getInstance: async function() {
                 // Add sub
-                const instance = await IndexSchema.Instance.findOne({ _id: state.queue.instance, sub: state.queue.sub })
+                const instance = await IndexSchema.Instance.findOne({ _id: state.queue.instanceId, sub: state.queue.sub })
                 state.instance = instance
             },
             getWorkflow: async function() {
                 // Add sub
-                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflow, sub: state.queue.sub }, '', {lean: true})
+                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId, sub: state.queue.sub }, '', {lean: true})
                 state.workflow = workflow
             },
             getRequests: async function() {
