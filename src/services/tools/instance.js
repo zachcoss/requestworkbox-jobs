@@ -46,8 +46,11 @@ module.exports = {
             throw new Error('Request is running')
         }
 
-        let bodyPayload = {}
-        const snapshot = {}
+        const snapshot = {
+            payloads: [],
+            tasks: [],
+            webhooks: [],
+        }
         const state = {
             queue: {},
             instance: {},
@@ -55,6 +58,9 @@ module.exports = {
             requests: {},
             storages: {},
             statuscheck: {},
+            runtimeResultNames: {},
+            webhookRequestId: null,
+            webhookTaskId: null,
         }
 
         const queueFunctions = {
@@ -67,7 +73,7 @@ module.exports = {
                 if (queueStatus === 'queued') {
                     // update status
                     await Stats.updateQueueStats({ queue: state.queue, status: 'starting', }, IndexSchema, socketService)
-                } else if (queueStatus === 'complete' || queueStatus === 'error' || 'archived') {
+                } else if (queueStatus === 'complete' || queueStatus === 'error' || queueStatus === 'archived') {
                     // delete message
                     await SQS.deleteMessage({
                         QueueUrl: process.env.AWS_QUEUE_STANDARD_URL,
@@ -94,14 +100,18 @@ module.exports = {
             },
             getBodyPayload: async function() {
                 if (state.queue.storageInstanceId && state.queue.storageInstanceId !== '') {
+                    const payloadTaskId = state.workflow.payloads[0]._id
+
                     // pull body payload
                     const bodyPayloadStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: process.env.STORAGE_BUCKET,
                         Key: `${state.queue.sub}/request-payloads/${state.queue.storageInstanceId}`,
                     }).promise()
-                    // set body payload
-                    bodyPayload = JSON.parse(storageValue.Body)
+
+                    // add payload to snapshot
+                    processFunctions.processRequestResponse(JSON.parse(storageValue.Body), payloadTaskId, 'payloads')
+
                     const bodyPayloadSize = Buffer.byteLength(JSON.stringify(storageValue.Body), 'utf8')
 
                     const requestResultTime = new Date() - bodyPayloadStart
@@ -129,14 +139,15 @@ module.exports = {
                     await Stats.updateInstanceUsage({ instance: state.instance, usages, }, IndexSchema)
 
                     // Create stat
-
                     const statConfig = {
-                        instance: state.instance._id,
+                        instanceId: state.instance._id,
                         requestName: `Body Payload`,
                         requestType: 'bodyPayload',
                         requestId: state.queue.storageInstanceId,
                         requestPayload: {},
-                        responsePayload: bodyPayload,
+                        responsePayload: JSON.parse(storageValue.Body),
+                        taskId: payloadTaskId,
+                        taskField: 'payloads',
                         status: 200,
                         statusText: 'OK',
                         startTime: bodyPayloadStart,
@@ -161,6 +172,12 @@ module.exports = {
                 // Add sub
                 const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId, sub: state.queue.sub }, '', {lean: true})
                 state.workflow = workflow
+
+                _.each(state.workflow.tasks, (task) => {
+                    if (task.runtimeResultName && task.runtimeResultName !== '') {
+                        state.runtimeResultNames[task.runtimeResultName] = task._id
+                    }
+                })
             },
             getRequests: async function() {
                 // Requests
@@ -170,15 +187,18 @@ module.exports = {
                     // Add sub
                     const request = await IndexSchema.Request.findOne({ _id: task.requestId, sub: state.queue.sub }, '', {lean: true})
                     state.requests[task.requestId] = request
-                });
-
-                // Webhook Request
-                if (state.workflow && state.workflow.webhookRequestId) {
-                    if (state.requests[state.workflow.webhookRequestId]) return; 
+                })
+                // Webhooks
+                await asyncEachOf(state.workflow.webhooks, async function (webhook, index) {
+                    if (!webhook.requestId || webhook.requestId === '') return;
+                    if (state.requests[webhook.requestId]) return;
                     // Add sub
-                    const request = await IndexSchema.Request.findOne({ _id: state.workflow.webhookRequestId, sub: state.queue.sub }, '', {lean: true})
-                    state.requests[state.workflow.webhookRequestId] = request
-                }
+                    const request = await IndexSchema.Request.findOne({ _id: webhook.requestId, sub: state.queue.sub }, '', {lean: true})
+                    state.requests[webhook.requestId] = request
+                    
+                    state.webhookRequestId = webhook.requestId
+                    state.webhookTaskId = webhook._id
+                })
             },
             getStorages: async function() {
                 await asyncEachOf(state.requests, async function(request) {
@@ -255,17 +275,14 @@ module.exports = {
         }
 
         const templateFunctions = {
-            templateInputs: function(requestId) {
+            templateInputs: function(requestId, taskId, taskField) {
                 const requestTemplate = {
                     requestId: requestId,
+                    taskId: taskId,
+                    taskField: taskField,
                     url: '',
                     method: '',
                     name: '',
-                    // url: {
-                    //     method: '',
-                    //     url: '',
-                    //     name: ''
-                    // },
                     query: {},
                     headers: {},
                     body: {}
@@ -281,7 +298,7 @@ module.exports = {
                 // Apply inputs
                 _.each(requestDetails, (requestDetailArray, requestDetailKey) => {
                     _.each(requestDetailArray, (requestDetailObj) => {
-                        if (requestDetailObj.key === '') return;
+                        if (requestDetailObj.key === '') return
                         
                         if (requestDetailObj.valueType === 'textInput') {
                             requestTemplate[requestDetailKey][requestDetailObj.key] = requestDetailObj.value
@@ -290,38 +307,38 @@ module.exports = {
                             const storageValue = state.storages[storageId].storageValue
                             requestTemplate[requestDetailKey][requestDetailObj.key] = storageValue
                         } else if (requestDetailObj.valueType === 'runtimeResult') {
-                            const runtimeResultName = requestDetailObj.value
-                            _.each(snapshot, (task) => {
-                                if (task.request.name === runtimeResultName) {
-                                    requestTemplate[requestDetailKey][requestDetailObj.key] = task.response
+                            if (requestDetailObj.value === '') return
+                            if (!state.runtimeResultNames[requestDetailObj.value]) return
+
+                            let taskId = state.runtimeResultNames[requestDetailObj.value]
+
+                            _.each(snapshot.tasks, (taskObj) => {
+                                if (taskObj._id === taskId && taskObj.responsePayload) {
+                                    requestTemplate[requestDetailKey][requestDetailObj.key] = taskObj.responsePayload
                                 }
                             })
                         } else if (requestDetailObj.valueType === 'incomingField') {
                             const incomingFieldName = requestDetailObj.value
-                            if (bodyPayload && bodyPayload[incomingFieldName]) {
-                                requestTemplate[requestDetailKey][requestDetailObj.key] = bodyPayload[incomingFieldName]
-                            }  
+                            _.each(snapshot.payloads, (payloadObj) => {
+                                if (payloadObj.responsePayload && payloadObj.responsePayload[incomingFieldName]) {
+                                    requestTemplate[requestDetailKey][requestDetailObj.key] = payloadObj.responsePayload[incomingFieldName]
+                                }
+                            })
                         }
                     })
                 })
 
+                // Apply webhook
+                if (taskField === 'webhooks') {
+                    if (!_.size(requestTemplate.body)) {
+                        requestTemplate.body = snapshot
+                    } else {
+                        requestTemplate.body['snapshot'] = snapshot
+                    }
+                }
+
                 return requestTemplate
             },
-        }
-
-        const statFunctions = {
-            createStat: async function(statConfig) {
-                try {
-                    if (state.statuscheck && state.statuscheck._id) {
-                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET, socketService, state.statuscheck)
-                    } else {
-                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
-                    }
-                } catch(err) {
-                    console.log('create stat error', err)
-                    throw new Error('Error creating stat')
-                }
-            }
         }
 
         const runFunctions = {
@@ -335,20 +352,14 @@ module.exports = {
                     // axios requires data field rather than body
                     data: requestTemplate.body,
                 }
-
-                if (requestType === 'webhook') {
-                    if (!_.size(requestConfig.data)) {
-                        requestConfig.data = snapshot
-                    } else {
-                        requestConfig.data['workflowResult'] = snapshot
-                    }
-                }
-
+                
                 const statConfig = {
-                    instance: state.instance._id,
+                    instanceId: state.instance._id,
                     requestName: requestTemplate.name,
                     requestType: requestType,
                     requestId: requestTemplate.requestId,
+                    taskId: requestTemplate.taskId,
+                    taskField: requestTemplate.taskField,
                     requestPayload: requestConfig,
                     responsePayload: {},
                     status: 0,
@@ -438,43 +449,62 @@ module.exports = {
             },
         }
 
-        const processFunctions = {
-            processRequestResponse: async function(requestResponse, taskId) {
-                if (requestResponse && requestResponse.data) {
-                    snapshot[taskId].response = requestResponse.data
-                } else {
-                    snapshot[taskId].response = 'Error'
+        const statFunctions = {
+            createStat: async function(statConfig) {
+                try {
+                    if (state.statuscheck && state.statuscheck._id) {
+                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET, socketService, state.statuscheck)
+                    } else {
+                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
+                    }
+                } catch(err) {
+                    console.log('create stat error', err)
+                    throw new Error('Error creating stat')
                 }
-            },
+            }
         }
 
-        const initFunctions = {
-            initializeRequest: async function(taskId, requestId, inputs) {
-                // apply inputs
-                const requestTemplate = await templateFunctions.templateInputs(requestId)
-                // initialize snapshot
-                snapshot[taskId] = {
-                    request: requestTemplate,
-                    response: {},
+        const processFunctions = {
+            processRequestResponse: async function(requestResponse, taskId, taskField) {
+                if (taskField === 'payloads') {
+                    snapshot[taskField].push({
+                        _id: taskId,
+                        responsePayload: requestResponse
+                    })
+                } else {
+                    if (requestResponse && requestResponse.data) {
+                        snapshot[taskField].push({
+                            _id: taskId,
+                            responsePayload: requestResponse.data
+                        })
+                    } else {
+                        snapshot[taskField].push({
+                            _id: taskId,
+                            responsePayload: 'Error'
+                        })
+                    }
                 }
             },
         }
 
         const startFunctions = {
-            startRequest: async function(taskId) {
-                const requestTemplate = snapshot[taskId].request
-                // perform request
-                const requestResponse = await runFunctions.runRequest(requestTemplate, 'request')
-                // perform updates
-                processFunctions.processRequestResponse(requestResponse, taskId)
-            },
-
             startWorkflow: async function() {
                 for (const task of state.workflow.tasks) {
-                    const request = state.requests[task.requestId]
-                    await initFunctions.initializeRequest(task._id, task.requestId, task.inputs)
-                    await startFunctions.startRequest(task._id)
+                    const requestTemplate = await templateFunctions.templateInputs(task.requestId, task._id, 'tasks')
+                    const requestResponse = await runFunctions.runRequest(requestTemplate, 'request')
+                    processFunctions.processRequestResponse(requestResponse, task._id, 'tasks')
                 }
+            },
+            sendWebhook: async function() {
+                if (!state.webhookRequestId || state.webhookRequestId === '') return;
+                
+                const startWebhook = new Date()
+    
+                const requestTemplate = await templateFunctions.templateInputs(state.webhookRequestId, state.webhookTaskId, 'webhooks')
+                const requestResponse = await runFunctions.runRequest(requestTemplate, 'webhook')
+                processFunctions.processRequestResponse(requestResponse, state.webhookTaskId, 'webhooks')
+    
+                const endWebhook = new Date()
             },
         }
 
@@ -513,18 +543,18 @@ module.exports = {
                 }).promise()
 
                 // Send webhook
-                if (state.workflow.webhookRequestId) {
+                if (state.webhookRequestId) {
                     if (state.statuscheck && state.statuscheck.sendWorkflowWebhook) {
                         if (state.statuscheck.sendWorkflowWebhook === 'always') {
                             await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                            await sendWebhook(snapshot)
+                            await startFunctions.sendWebhook()
                         } else if  (state.statuscheck.sendWorkflowWebhook === 'onSuccess') {
                             await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                            await sendWebhook(snapshot)
+                            await startFunctions.sendWebhook()
                         }
                     } else {
                         await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                        await sendWebhook(snapshot)
+                        await startFunctions.sendWebhook()
                     }
                 }
 
@@ -534,20 +564,6 @@ module.exports = {
             }
 
             return snapshot
-        }
-
-        const sendWebhook = async () => {
-            if (!state.workflow || !state.workflow.webhookRequestId) return;
-
-            const startWebhook = new Date()
-            console.log('sending webhook')
-
-            const requestTemplate = await templateFunctions.templateInputs(state.workflow.webhookRequestId)
-            const requestResponse = await runFunctions.runRequest(requestTemplate, 'webhook')
-
-            console.log('sent webhoook')
-            const endWebhook = new Date()
-            console.log(`Webhook took ${endWebhook - startWebhook} ms`)
         }
 
         try {
@@ -568,7 +584,7 @@ module.exports = {
                         ReceiptHandle: incoming.ReceiptHandle,
                     }).promise()
 
-                    if (state.workflow.webhookRequestId && state.queue.status === 'webhook') {
+                    if (state.webhookRequestId && state.queue.status === 'webhook') {
                         // Update stat
                         await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
                     } else {
@@ -578,14 +594,14 @@ module.exports = {
                         if (state.statuscheck && state.statuscheck.sendWorkflowWebhook) {
                             if (state.statuscheck.sendWorkflowWebhook === 'always') {
                                 await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                                await sendWebhook(snapshot)
+                                await startFunctions.sendWebhook()
                             } else if  (state.statuscheck.sendWorkflowWebhook === 'onError') {
                                 await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                                await sendWebhook(snapshot)
+                                await startFunctions.sendWebhook()
                             }
                         } else {
                             await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                            await sendWebhook(snapshot)
+                            await startFunctions.sendWebhook()
                         }
                     }
                 } else {
