@@ -27,14 +27,10 @@ module.exports.config = () => {
     })
     .unless({
         custom: function(req) {
-            if (req.path === '/') {
-                return true
-            } else if (_.includes(req.path, '/return-workflow')) {
-                if (req.headers['x-api-key']) return true
-                else return false
-            } else {
-                return false
-            }
+            if (req.path === '/') return true
+            else if (req.headers['x-api-key']) return true
+            else if (req.headers['authorization']) return false
+            else return false
         },
     })
 }

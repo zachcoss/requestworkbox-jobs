@@ -12,8 +12,7 @@ module.exports = {
         try {
             // filter query
             if (!req.query || !req.query.queueid) {
-                console.log('Missing queue id')
-                return res.status(500).send('Missing queue id')
+                return res.status(400).send('Missing queue id.')
             }
 
             // find queue
@@ -21,8 +20,7 @@ module.exports = {
             const queue = await IndexSchema.Queue.findOne(findPayload)
 
             if (!queue || !queue._id) {
-                console.log('Queue not found')
-                return res.status(500).send('Queue not found')
+                return res.status(400).send('Queue not found.')
             }
 
             // Create Queue Pending Stat
@@ -32,8 +30,8 @@ module.exports = {
             const workflowResult = await instanceTools.start(null, queue)
             return res.status(200).send(workflowResult)
         } catch (err) {
-            console.log(err)
-            return res.status(500).send(err)
+            console.log('Return Workflow Error', err)
+            return res.status(500).send('Return workflow error')
         }
     },
 }

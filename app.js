@@ -14,16 +14,19 @@ const app = express();
 const port = process.env.PORT
 
 app.set('port', port);
+app.set('x-powered-by', false)
 
+const compression = require('compression')
+app.use(compression())
 app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors({
-    origin: ['https://dashboard.requestworkbox.com'],
+    origin: ['https://api.requestworkbox.com'],
     methods: ['GET','POST'],
-    allowedHeaders: ['Authorization'],
+    allowedHeaders: ['authorization','content-type'],
     exposedHeaders: [],
     credentials: true,
     maxAge: 86400,
