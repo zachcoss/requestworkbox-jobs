@@ -21,9 +21,9 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors({
-    origin: ['http://localhost:3000','https://api.requestworkbox.com'],
+    origin: ['https://dashboard.requestworkbox.com'],
     methods: ['GET','POST'],
-    allowedHeaders: ['x-api-key','Authorization'],
+    allowedHeaders: ['Authorization'],
     exposedHeaders: [],
     credentials: true,
     maxAge: 86400,
