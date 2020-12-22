@@ -10,7 +10,7 @@ const
 
 module.exports = {
     findQueueDocs: async (range) => {
-        const findPayload = { status: 'pending', queueType: { $in:  ['queue','schedule','statuscheck'] } }
+        const findPayload = { status: 'pending', queueType: { $in:  ['queue','schedule'] } }
 
         if (range === 'old') {
             findPayload['date'] = { $gt: moment().subtract(5, 'minutes'), $lt: moment(), }

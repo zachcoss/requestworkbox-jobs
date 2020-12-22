@@ -57,7 +57,6 @@ module.exports = {
             workflow: {},
             requests: {},
             storages: {},
-            statuscheck: {},
             runtimeResultNames: {},
             webhookRequestId: null,
             webhookTaskId: null,
@@ -90,12 +89,6 @@ module.exports = {
                     }).promise()
 
                     throw new Error('Request is running')
-                }
-            },
-            getStatuscheck: async function() {
-                if (state.queue.queueType === 'statuscheck') {
-                    const statuscheck = await IndexSchema.Statuscheck.findOne(state.queue.statuscheckId)
-                    state.statuscheck = statuscheck
                 }
             },
             getBodyPayload: async function() {
@@ -164,13 +157,11 @@ module.exports = {
 
         const getFunctions = {
             getInstance: async function() {
-                // Add sub
                 const instance = await IndexSchema.Instance.findOne({ _id: state.queue.instanceId, sub: state.queue.sub })
                 state.instance = instance
             },
             getWorkflow: async function() {
-                // Add sub
-                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId, sub: state.queue.sub }, '', {lean: true})
+                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId }, '', {lean: true})
                 state.workflow = workflow
 
                 _.each(state.workflow.tasks, (task) => {
@@ -184,16 +175,14 @@ module.exports = {
                 await asyncEachOf(state.workflow.tasks, async function (task, index) {
                     if (!task.requestId || task.requestId === '') return;
                     if (state.requests[task.requestId]) return;
-                    // Add sub
-                    const request = await IndexSchema.Request.findOne({ _id: task.requestId, sub: state.queue.sub }, '', {lean: true})
+                    const request = await IndexSchema.Request.findOne({ _id: task.requestId }, '', {lean: true})
                     state.requests[task.requestId] = request
                 })
                 // Webhooks
                 await asyncEachOf(state.workflow.webhooks, async function (webhook, index) {
                     if (!webhook.requestId || webhook.requestId === '') return;
                     if (state.requests[webhook.requestId]) return;
-                    // Add sub
-                    const request = await IndexSchema.Request.findOne({ _id: webhook.requestId, sub: state.queue.sub }, '', {lean: true})
+                    const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }, '', {lean: true})
                     state.requests[webhook.requestId] = request
                     
                     state.webhookRequestId = webhook.requestId
@@ -206,24 +195,21 @@ module.exports = {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        // Add sub
-                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value, sub: state.queue.sub }, 'storageType mimetype size name', {lean: true})
+                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.headers, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
 
-                        // Add sub
-                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value, sub: state.queue.sub }, 'storageType mimetype size name', {lean: true})
+                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                     await asyncEachOf(request.body, async function (obj) {
                         if (obj.valueType !== 'storage') return;
                         if (state.storages[obj.value]) return;
                         
-                        // Add sub
-                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value, sub: state.queue.sub }, 'storageType mimetype size name', {lean: true})
+                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
                         state.storages[obj.value] = storage
                     })
                 })
@@ -436,15 +422,14 @@ module.exports = {
 
                     await statFunctions.createStat(statConfig)
 
-                    if (state.statuscheck) {
-                        if (state.statuscheck && state.statuscheck.onWorkflowTaskError && state.statuscheck.onWorkflowTaskError === 'continue') {
-                            console.log('continue after error')
-                        } else {
-                            throw new Error(err)
-                        }
-                    } else {
-                        throw new Error(err)
-                    }
+                    throw new Error(err)
+
+                    // Use for "Workflow Continue After Error"
+                    // if (onWorkflowTaskError && onWorkflowTaskError === 'continue') {
+                    //     console.log('continue after error')
+                    // } else {
+                    //     throw new Error(err)
+                    // }
                 }
             },
         }
@@ -452,11 +437,7 @@ module.exports = {
         const statFunctions = {
             createStat: async function(statConfig) {
                 try {
-                    if (state.statuscheck && state.statuscheck._id) {
-                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET, socketService, state.statuscheck)
-                    } else {
-                        await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
-                    }
+                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
@@ -515,9 +496,6 @@ module.exports = {
             await queueFunctions.processQueue()
 
             await Stats.updateQueueStats({ queue: state.queue, status: 'initializing', }, IndexSchema, socketService)
-
-            // get status check
-            await queueFunctions.getStatuscheck()
             
             // initialize instance state
             await getFunctions.getInstance()
@@ -544,18 +522,8 @@ module.exports = {
 
                 // Send webhook
                 if (state.webhookRequestId) {
-                    if (state.statuscheck && state.statuscheck.sendWorkflowWebhook) {
-                        if (state.statuscheck.sendWorkflowWebhook === 'always') {
-                            await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                            await startFunctions.sendWebhook()
-                        } else if  (state.statuscheck.sendWorkflowWebhook === 'onSuccess') {
-                            await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                            await startFunctions.sendWebhook()
-                        }
-                    } else {
-                        await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                        await startFunctions.sendWebhook()
-                    }
+                    await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                    await startFunctions.sendWebhook()
                 }
 
                 await Stats.updateQueueStats({ queue: state.queue, status: 'complete', }, IndexSchema, socketService)
@@ -591,18 +559,8 @@ module.exports = {
                         await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
                         
                         // Send webhook
-                        if (state.statuscheck && state.statuscheck.sendWorkflowWebhook) {
-                            if (state.statuscheck.sendWorkflowWebhook === 'always') {
-                                await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                                await startFunctions.sendWebhook()
-                            } else if  (state.statuscheck.sendWorkflowWebhook === 'onError') {
-                                await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                                await startFunctions.sendWebhook()
-                            }
-                        } else {
-                            await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
-                            await startFunctions.sendWebhook()
-                        }
+                        await Stats.updateQueueStats({ queue: state.queue, status: 'webhook', }, IndexSchema, socketService)
+                        await startFunctions.sendWebhook()
                     }
                 } else {
                     await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
