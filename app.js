@@ -15,6 +15,7 @@ const port = process.env.PORT
 
 app.set('port', port);
 app.set('x-powered-by', false)
+app.set('json escape', true)
 
 const compression = require('compression')
 app.use(compression())

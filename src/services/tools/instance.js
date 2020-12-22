@@ -337,6 +337,11 @@ module.exports = {
                     params: requestTemplate.query,
                     // axios requires data field rather than body
                     data: requestTemplate.body,
+
+                    timeout: 30000,
+                    maxContentLength: 10000000,
+                    maxBodyLength: 10000000,
+                    maxRedirects: 0,
                 }
                 
                 const statConfig = {
@@ -357,6 +362,7 @@ module.exports = {
                 try {
 
                     const requestLengthSize = Buffer.byteLength(JSON.stringify(requestConfig), 'utf8')
+                    if (requestLengthSize > 10000000) throw new Error('Request size error: 10MB max request limit.')
 
                     const requestUsages = [{
                         sub: state.instance.sub,
@@ -378,6 +384,7 @@ module.exports = {
 
                     const requestResults = _.pick(request, ['data', 'status', 'statusText','headers'])
                     const resultLengthSize = Buffer.byteLength(JSON.stringify(requestResults), 'utf8')
+                    if (resultLengthSize > 10000000) throw new Error('Response size error: 10MB max response limit.')
 
                     const responseUsages = [{
                         sub: state.instance.sub,
@@ -447,21 +454,37 @@ module.exports = {
 
         const processFunctions = {
             processRequestResponse: async function(requestResponse, taskId, taskField) {
+                const over5MB = Buffer.byteLength(JSON.stringify(requestResponse)) > 5000000 ? true : false
+
                 if (taskField === 'payloads') {
-                    snapshot[taskField].push({
-                        _id: taskId,
-                        responsePayload: requestResponse
-                    })
-                } else {
-                    if (requestResponse && requestResponse.data) {
+                    if (over5MB) {
                         snapshot[taskField].push({
                             _id: taskId,
-                            responsePayload: requestResponse.data
+                            responsePayload: 'Response snapshot error: 5MB max response limit.'
                         })
                     } else {
                         snapshot[taskField].push({
                             _id: taskId,
-                            responsePayload: 'Error'
+                            responsePayload: requestResponse
+                        })
+                    }
+                } else {
+                    if (requestResponse && requestResponse.data) {
+                        if (over5MB) {
+                            snapshot[taskField].push({
+                                _id: taskId,
+                                responsePayload: 'Response snapshot error: 5MB max response limit.'
+                            })
+                        } else {
+                            snapshot[taskField].push({
+                                _id: taskId,
+                                responsePayload: requestResponse.data
+                            })
+                        }
+                    } else {
+                        snapshot[taskField].push({
+                            _id: taskId,
+                            responsePayload: 'Response error: missing data.'
                         })
                     }
                 }
