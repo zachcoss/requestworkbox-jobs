@@ -99,7 +99,7 @@ module.exports = {
                     const bodyPayloadStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: process.env.STORAGE_BUCKET,
-                        Key: `${state.queue.sub}/request-payloads/${state.queue.storageInstanceId}`,
+                        Key: `${state.queue.projectId}/workflow-payloads/${state.queue.storageInstanceId}`,
                     }).promise()
 
                     // add payload to snapshot
@@ -219,7 +219,7 @@ module.exports = {
                     const storageValueStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: process.env.STORAGE_BUCKET,
-                        Key: `${state.instance.sub}/storage/${storage._id}`,
+                        Key: `${state.instance.projectId}/storage-data/${storage._id}`,
                     }).promise()
 
                     if (storage.storageType === 'text') {
