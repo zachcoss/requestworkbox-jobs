@@ -1,7 +1,5 @@
 const
     _ = require('lodash'),
-    mongoose = require('mongoose'),
-    moment = require('moment'),
     socketService = require('../tools/socket'),
     IndexSchema = require('../tools/schema').schema,
     Stats = require('../tools/stats').stats,
@@ -28,7 +26,14 @@ module.exports = {
 
             // start immediately
             const workflowResult = await instanceTools.start(null, queue)
-            return res.status(200).send(workflowResult)
+
+            const publicUserObject = _.pick(queue, ['publicUser'])
+
+            if (publicUserObject && publicUserObject['publicUser'] && publicUserObject['publicUser'] === false) {
+                return res.status(200).send(workflowResult)
+            }
+
+            return res.sendStatus(200)
         } catch (err) {
             console.log('Return Workflow Error', err)
             return res.status(500).send('Return workflow error')

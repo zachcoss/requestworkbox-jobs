@@ -339,8 +339,8 @@ module.exports = {
                     data: requestTemplate.body,
 
                     timeout: 30000,
-                    maxContentLength: 10000000,
-                    maxBodyLength: 10000000,
+                    maxContentLength: 5000000,
+                    maxBodyLength: 5000000,
                     maxRedirects: 0,
                 }
                 
@@ -362,7 +362,7 @@ module.exports = {
                 try {
 
                     const requestLengthSize = Buffer.byteLength(JSON.stringify(requestConfig), 'utf8')
-                    if (requestLengthSize > 10000000) throw new Error('Request size error: 10MB max request limit.')
+                    if (requestLengthSize > 5000000) throw new Error('Request size error: 5MB max request limit.')
 
                     const requestUsages = [{
                         sub: state.instance.sub,
@@ -382,9 +382,12 @@ module.exports = {
                     const requestEnd = new Date()
                     const requestResultTime = requestEnd - requestStart
 
-                    const requestResults = _.pick(request, ['data', 'status', 'statusText','headers'])
+                    let requestResults = _.pick(request, ['data', 'status', 'statusText','headers'])
+
                     const resultLengthSize = Buffer.byteLength(JSON.stringify(requestResults), 'utf8')
-                    if (resultLengthSize > 10000000) throw new Error('Response size error: 10MB max response limit.')
+                    if (resultLengthSize > 5000000) throw new Error('Response size error: 5MB max response limit.')
+
+                    requestResults.requestName = statConfig.requestName
 
                     const responseUsages = [{
                         sub: state.instance.sub,
@@ -454,40 +457,32 @@ module.exports = {
 
         const processFunctions = {
             processRequestResponse: async function(requestResponse, taskId, taskField) {
-                const over5MB = Buffer.byteLength(JSON.stringify(requestResponse)) > 5000000 ? true : false
+                const over1MB = Buffer.byteLength(JSON.stringify(requestResponse)) > 1000000 ? true : false
+
+                let data = {
+                    _id: taskId,
+                    requestName: requestResults.requestName || '',
+                }
 
                 if (taskField === 'payloads') {
-                    if (over5MB) {
-                        snapshot[taskField].push({
-                            _id: taskId,
-                            responsePayload: 'Response snapshot error: 5MB max response limit.'
-                        })
-                    } else {
-                        snapshot[taskField].push({
-                            _id: taskId,
-                            responsePayload: requestResponse
-                        })
-                    }
-                } else {
-                    if (requestResponse && requestResponse.data) {
-                        if (over5MB) {
-                            snapshot[taskField].push({
-                                _id: taskId,
-                                responsePayload: 'Response snapshot error: 5MB max response limit.'
-                            })
-                        } else {
-                            snapshot[taskField].push({
-                                _id: taskId,
-                                responsePayload: requestResponse.data
-                            })
-                        }
-                    } else {
-                        snapshot[taskField].push({
-                            _id: taskId,
-                            responsePayload: 'Response error: missing data.'
-                        })
-                    }
+                    data.task = 'payload'
+
+                    if (!requestResponse) data.response = 'Response error: missing data.'
+                    if (over1MB) data.response = 'Response snapshot error: 1MB max response limit.'
+                    else data.response = requestResponse
                 }
+
+                if (taskField === 'webhooks' || taskField === 'tasks') {
+                    data.task = (taskField === 'webhooks') ? 'webhook' : 'task'
+
+                    if (!requestResponse.data) data.response = 'Response error: missing data.'
+                    if (over1MB) data.response = 'Response snapshot error: 1MB max response limit.'
+                    else data.response = requestResponse.data
+                }
+
+                if (!data.task || !data.response) data.error = true
+
+                snapshot[taskField].push(data)
             },
         }
 
@@ -509,6 +504,15 @@ module.exports = {
                 processFunctions.processRequestResponse(requestResponse, state.webhookTaskId, 'webhooks')
     
                 const endWebhook = new Date()
+            },
+            sendSnapshot: async function() {
+                const publicUserObject = _.pick(state.queue, ['publicUser'])
+
+                if (publicUserObject && publicUserObject['publicUser'] && publicUserObject['publicUser'] === false) {
+                    return snapshot
+                } else {
+                    return _.map(snapshot)
+                }
             },
         }
 
@@ -554,13 +558,13 @@ module.exports = {
                 await Stats.updateQueueStats({ queue: state.queue, status: 'complete', }, IndexSchema, socketService)
             }
 
-            return snapshot
         }
 
         try {
-            const finalSnapshot = await init()
+            // Initialize and set snapshot data
+            await init()
 
-            return finalSnapshot
+            return sendSnapshot()
             
         } catch(err) {
             console.log('err', err.message || err.response || err)
@@ -587,7 +591,7 @@ module.exports = {
                     }
                 } else {
                     await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
-                    return snapshot
+                    return sendSnapshot()
                 }
             }
         }
