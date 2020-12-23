@@ -7,6 +7,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const logger = require('morgan');
 const cors = require('cors');
+const compression = require('compression')
 const jobs = require('./src/services/tools/jobs');
 
 const http = require('http');
@@ -17,9 +18,8 @@ app.set('port', port);
 app.set('x-powered-by', false)
 app.set('json escape', true)
 
-const compression = require('compression')
+app.use(logger('combined'));
 app.use(compression())
-app.use(logger('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
