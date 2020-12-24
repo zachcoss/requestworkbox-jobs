@@ -103,7 +103,7 @@ module.exports = {
                     }).promise()
 
                     // add payload to snapshot
-                    processFunctions.processRequestResponse(JSON.parse(storageValue.Body), payloadTaskId, 'payloads')
+                    processFunctions.processRequestResults(JSON.parse(storageValue.Body), payloadTaskId, 'payloads')
 
                     const bodyPayloadSize = Buffer.byteLength(JSON.stringify(storageValue.Body), 'utf8')
 
@@ -162,6 +162,8 @@ module.exports = {
             },
             getWorkflow: async function() {
                 const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId }, '', {lean: true})
+                if (workflow.preventExecution && workflow.preventExecution === true) throw new Error('Preventing workflow execution.')
+
                 state.workflow = workflow
 
                 _.each(state.workflow.tasks, (task) => {
@@ -175,43 +177,54 @@ module.exports = {
                 await asyncEachOf(state.workflow.tasks, async function (task, index) {
                     if (!task.requestId || task.requestId === '') return;
                     if (state.requests[task.requestId]) return;
+
                     const request = await IndexSchema.Request.findOne({ _id: task.requestId }, '', {lean: true})
+                    if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing request execution.')
+
                     state.requests[task.requestId] = request
+                }, function (err) {
+                    console.log('Get requests error', err)
+                    throw new Error('Get requests error')
                 })
                 // Webhooks
                 await asyncEachOf(state.workflow.webhooks, async function (webhook, index) {
                     if (!webhook.requestId || webhook.requestId === '') return;
                     if (state.requests[webhook.requestId]) return;
+
                     const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }, '', {lean: true})
+                    if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing webhook execution.')
+
                     state.requests[webhook.requestId] = request
-                    
                     state.webhookRequestId = webhook.requestId
                     state.webhookTaskId = webhook._id
+                }, function (err) {
+                    console.log('Get webhooks error', err)
+                    throw new Error('Get webhooks error')
                 })
+            },
+            storageRequest: async function(obj) {
+                if (obj.valueType !== 'storage') return;
+                if (state.storages[obj.value]) return;
+
+                const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
+                if (storage.preventExecution && storage.preventExecution === true) throw new Error('Preventing storage execution.')
+
+                state.storages[obj.value] = storage
             },
             getStorages: async function() {
                 await asyncEachOf(state.requests, async function(request) {
-                    await asyncEachOf(request.query, async function (obj) {
-                        if (obj.valueType !== 'storage') return;
-                        if (state.storages[obj.value]) return;
-
-                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
-                        state.storages[obj.value] = storage
-                    })
-                    await asyncEachOf(request.headers, async function (obj) {
-                        if (obj.valueType !== 'storage') return;
-                        if (state.storages[obj.value]) return;
-
-                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
-                        state.storages[obj.value] = storage
-                    })
-                    await asyncEachOf(request.body, async function (obj) {
-                        if (obj.valueType !== 'storage') return;
-                        if (state.storages[obj.value]) return;
-                        
-                        const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
-                        state.storages[obj.value] = storage
-                    })
+                    for (const obj of request.query) {
+                        await getFunctions.storageRequest(obj)
+                    }
+                    for (const obj of request.headers) {
+                        await getFunctions.storageRequest(obj)
+                    }
+                    for (const obj of request.body) {
+                        await getFunctions.storageRequest(obj)
+                    }
+                }, function (err) {
+                    console.log('Get storages error', err)
+                    throw new Error('Get storages error')
                 })
             },
             getStorageDetails: async function() {
@@ -271,10 +284,13 @@ module.exports = {
                     name: '',
                     query: {},
                     headers: {},
-                    body: {}
+                    body: {},
+                    sensitiveResponse: false,
                 }
 
                 const request = state.requests[requestId]
+                if (request.sensitiveResponse && requestTemplate.sensitiveResponse === true) requestTemplate.sensitiveResponse = true
+
                 const requestDetails = _.pick(request, ['query','headers','body'])
 
                 requestTemplate.url = request.url
@@ -317,9 +333,9 @@ module.exports = {
                 // Apply webhook
                 if (taskField === 'webhooks') {
                     if (!_.size(requestTemplate.body)) {
-                        requestTemplate.body = snapshot
+                        requestTemplate.body = startFunctions.sendWebhook()
                     } else {
-                        requestTemplate.body['snapshot'] = snapshot
+                        requestTemplate.body['snapshot'] = startFunctions.sendWebhook()
                     }
                 }
 
@@ -357,6 +373,7 @@ module.exports = {
                     statusText: '',
                     startTime: new Date(),
                     endTime: new Date(),
+                    sensitiveResponse: requestTemplate.sensitiveResponse,
                 }
                 
                 try {
@@ -388,6 +405,7 @@ module.exports = {
                     if (resultLengthSize > 5000000) throw new Error('Response size error: 5MB max response limit.')
 
                     requestResults.requestName = statConfig.requestName
+                    requestResults.sensitiveResponse = statConfig.sensitiveResponse
 
                     const responseUsages = [{
                         sub: state.instance.sub,
@@ -456,31 +474,28 @@ module.exports = {
         }
 
         const processFunctions = {
-            processRequestResponse: async function(requestResponse, taskId, taskField) {
-                const over1MB = Buffer.byteLength(JSON.stringify(requestResponse)) > 1000000 ? true : false
+            processRequestResults: async function(requestResults, taskId, taskField) {
+                const over1MB = Buffer.byteLength(JSON.stringify(requestResults)) > 1000000 ? true : false
 
                 let data = {
-                    _id: taskId,
+                    taskId: taskId,
                     requestName: requestResults.requestName || '',
                 }
 
                 if (taskField === 'payloads') {
-                    data.task = 'payload'
+                    if (!requestResults) data.response = 'Response error: missing data.'
 
-                    if (!requestResponse) data.response = 'Response error: missing data.'
                     if (over1MB) data.response = 'Response snapshot error: 1MB max response limit.'
-                    else data.response = requestResponse
+                    else data.response = requestResults
                 }
 
                 if (taskField === 'webhooks' || taskField === 'tasks') {
-                    data.task = (taskField === 'webhooks') ? 'webhook' : 'task'
-
-                    if (!requestResponse.data) data.response = 'Response error: missing data.'
+                    if (!requestResults.data) data.response = 'Response error: missing data.'
+                    if (requestResults.sensitiveResponse && requestResults.sensitiveResponse === true) data.response = 'Response redacted.'
+                    
                     if (over1MB) data.response = 'Response snapshot error: 1MB max response limit.'
-                    else data.response = requestResponse.data
+                    else data.response = requestResults.data
                 }
-
-                if (!data.task || !data.response) data.error = true
 
                 snapshot[taskField].push(data)
             },
@@ -490,28 +505,44 @@ module.exports = {
             startWorkflow: async function() {
                 for (const task of state.workflow.tasks) {
                     const requestTemplate = await templateFunctions.templateInputs(task.requestId, task._id, 'tasks')
-                    const requestResponse = await runFunctions.runRequest(requestTemplate, 'request')
-                    processFunctions.processRequestResponse(requestResponse, task._id, 'tasks')
+                    const requestResults = await runFunctions.runRequest(requestTemplate, 'request')
+                    processFunctions.processRequestResults(requestResults, task._id, 'tasks')
                 }
             },
             sendWebhook: async function() {
-                if (!state.webhookRequestId || state.webhookRequestId === '') return;
-                
-                const startWebhook = new Date()
+                if (!state.webhookRequestId || state.webhookRequestId === '') return
     
                 const requestTemplate = await templateFunctions.templateInputs(state.webhookRequestId, state.webhookTaskId, 'webhooks')
-                const requestResponse = await runFunctions.runRequest(requestTemplate, 'webhook')
-                processFunctions.processRequestResponse(requestResponse, state.webhookTaskId, 'webhooks')
-    
-                const endWebhook = new Date()
+                const requestResults = await runFunctions.runRequest(requestTemplate, 'webhook')
+                processFunctions.processRequestResults(requestResults, state.webhookTaskId, 'webhooks')
             },
             sendSnapshot: async function() {
                 const publicUserObject = _.pick(state.queue, ['publicUser'])
 
                 if (publicUserObject && publicUserObject['publicUser'] && publicUserObject['publicUser'] === false) {
+                    const member = await IndexSchema.Member.findOne({
+                        sub: state.instance.sub,
+                        projectId: state.instance.projectId,
+                    }).lean()
+                    if (!member || !member._id) throw new Error('Snapshot permissions error.')
+                    if (!member.active) throw new Error('Snapshot permission error.')
+                    if (member.status !== 'accepted') throw new Error('Snapshot permission error.')
+                    if (member.permission === 'none') throw new Error('Snapshot permission error.')
+
+                    if (member.permission === 'write') return snapshot
+                    if (member.permission === 'read') return _.map(snapshot, (snapshotArray) => {
+                        return _.map(snapshotArray, (task) => {
+                            return { taskId: task.taskId, requestName: task.requestName }
+                        })
+                    })
+
                     return snapshot
                 } else {
-                    return _.map(snapshot)
+                    return _.map(snapshot, (snapshotArray) => {
+                        return _.map(snapshotArray, (task) => {
+                            return { requestName: task.requestName }
+                        })
+                    })
                 }
             },
         }
