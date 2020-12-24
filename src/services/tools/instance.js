@@ -300,7 +300,8 @@ module.exports = {
                 // Apply inputs
                 _.each(requestDetails, (requestDetailArray, requestDetailKey) => {
                     _.each(requestDetailArray, (requestDetailObj) => {
-                        if (requestDetailObj.key === '') return
+                        if (!requestDetailObj.active) return
+                        if (requestDetailObj.key === '' || requestDetailObj.value === '') return
                         
                         if (requestDetailObj.valueType === 'textInput') {
                             requestTemplate[requestDetailKey][requestDetailObj.key] = requestDetailObj.value
