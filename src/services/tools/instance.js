@@ -16,7 +16,23 @@ const
     socketService = require('../tools/socket'),
     Stats = require('../tools/stats').stats,
     S3 = require('./s3').S3,
-    SQS = require('./sqs').SQS;
+    SQS = require('./sqs').SQS,
+    validUrl = require('valid-url'),
+    productionUrls = [
+        'https://dashboard.requestworkbox.com', 'https://dashboard.requestworkbox.com/',
+        'https://api.requestworkbox.com', 'https://api.requestworkbox.com/',
+        'https://jobs.requestworkbox.com', 'https://jobs.requestworkbox.com/',
+        'https://billing.requestworkbox.com', 'https://billing.requestworkbox.com/',
+        'https://support.requestworkbox.com', 'https://support.requestworkbox.com/',
+        'https://service.requestworkbox.com', 'https://service.requestworkbox.com/',
+        'https://primitives.requestworkbox.com', 'https://primitives.requestworkbox.com/',],
+    stagingUrls = [
+        'http://localhost:8080', 'http://localhost:8080/', // dashboard/support
+        'http://localhost:3000', 'http://localhost:3000/', // api
+        'http://localhost:3001', 'http://localhost:3001/', // billing
+        'http://localhost:3002', 'http://localhost:3002/', // support-api
+        'http://localhost:4000', 'http://localhost:4000/', // jobs
+        'http://localhost:5000', 'http://localhost:5000/',]; // primitives
 
 module.exports = {
     start: async (queuePayload, queueDoc, messageAction) => {
@@ -161,7 +177,7 @@ module.exports = {
                 state.instance = instance
             },
             getWorkflow: async function() {
-                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId }, '', {lean: true})
+                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId }).lean()
                 if (workflow.preventExecution && workflow.preventExecution === true) throw new Error('Preventing workflow execution.')
 
                 state.workflow = workflow
@@ -178,35 +194,49 @@ module.exports = {
                     if (!task.requestId || task.requestId === '') return;
                     if (state.requests[task.requestId]) return;
 
-                    const request = await IndexSchema.Request.findOne({ _id: task.requestId }, '', {lean: true})
+                    const request = await IndexSchema.Request.findOne({ _id: task.requestId }).lean()
                     if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing request execution.')
+
+                    if (!request.url) throw new Error('Missing URL.')
+                    if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
+                    if (!validUrl.isWebUri(request.url)) throw new Error('Not valid URL.')
+                    if (_.includes(request.url, 'requestworkbox.com')) {
+                        if (!_.includes(productionUrls), request.url) throw new Error('Recursive URLs not allowed.')
+                    }
 
                     state.requests[task.requestId] = request
                 }, function (err) {
                     console.log('Get requests error', err)
-                    throw new Error('Get requests error')
+                    throw new Error(`Get requests error: ${err.message}`)
                 })
                 // Webhooks
                 await asyncEachOf(state.workflow.webhooks, async function (webhook, index) {
                     if (!webhook.requestId || webhook.requestId === '') return;
                     if (state.requests[webhook.requestId]) return;
 
-                    const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }, '', {lean: true})
+                    const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }).lean()
                     if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing webhook execution.')
+
+                    if (!request.url) throw new Error('Missing URL.')
+                    if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
+                    if (!validUrl.isWebUri(request.url)) throw new Error('Not valid URL.')
+                    if (_.includes(request.url, 'requestworkbox.com')) {
+                        if (!_.includes(productionUrls), request.url) throw new Error('Recursive URLs not allowed.')
+                    }
 
                     state.requests[webhook.requestId] = request
                     state.webhookRequestId = webhook.requestId
                     state.webhookTaskId = webhook._id
                 }, function (err) {
-                    console.log('Get webhooks error', err)
-                    throw new Error('Get webhooks error')
+                    console.log('Get requests error', err)
+                    throw new Error(`Get requests error: ${err.message}`)
                 })
             },
             storageRequest: async function(obj) {
                 if (obj.valueType !== 'storage') return;
                 if (state.storages[obj.value]) return;
 
-                const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name', {lean: true})
+                const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name').lean()
                 if (storage.preventExecution && storage.preventExecution === true) throw new Error('Preventing storage execution.')
 
                 state.storages[obj.value] = storage
@@ -224,7 +254,7 @@ module.exports = {
                     }
                 }, function (err) {
                     console.log('Get storages error', err)
-                    throw new Error('Get storages error')
+                    throw new Error(`Get storages error: ${err.message}`)
                 })
             },
             getStorageDetails: async function() {
