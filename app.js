@@ -18,7 +18,7 @@ app.set('port', port);
 app.set('x-powered-by', false)
 app.set('json escape', true)
 
-app.use(logger('combined'));
+app.use(logger('common'));
 app.use(compression())
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
