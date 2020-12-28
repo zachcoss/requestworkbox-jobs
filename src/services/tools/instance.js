@@ -108,6 +108,8 @@ module.exports = {
                 }
             },
             getBodyPayload: async function() {
+                if (!state.workflow.payloads[0].active) return;
+
                 if (state.queue.storageInstanceId && state.queue.storageInstanceId !== '') {
                     const payloadTaskId = state.workflow.payloads[0]._id
 
@@ -193,6 +195,7 @@ module.exports = {
                 await asyncEachOf(state.workflow.tasks, async function (task, index) {
                     if (!task.requestId || task.requestId === '') return;
                     if (state.requests[task.requestId]) return;
+                    if (!task.active) return;
 
                     const request = await IndexSchema.Request.findOne({ _id: task.requestId }).lean()
                     if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing request execution.')
@@ -213,6 +216,7 @@ module.exports = {
                 await asyncEachOf(state.workflow.webhooks, async function (webhook, index) {
                     if (!webhook.requestId || webhook.requestId === '') return;
                     if (state.requests[webhook.requestId]) return;
+                    if (!task.active) return;
 
                     const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }).lean()
                     if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing webhook execution.')
@@ -312,6 +316,7 @@ module.exports = {
                     url: '',
                     method: '',
                     name: '',
+                    authorization: {},
                     query: {},
                     headers: {},
                     body: {},
@@ -321,7 +326,7 @@ module.exports = {
                 const request = state.requests[requestId]
                 if (request.sensitiveResponse && requestTemplate.sensitiveResponse === true) requestTemplate.sensitiveResponse = true
 
-                const requestDetails = _.pick(request, ['query','headers','body'])
+                const requestDetails = _.pick(request, ['authorization','query','headers','body'])
 
                 requestTemplate.url = request.url
                 requestTemplate.name = request.name
@@ -364,9 +369,9 @@ module.exports = {
                 // Apply webhook
                 if (taskField === 'webhooks') {
                     if (!_.size(requestTemplate.body)) {
-                        requestTemplate.body = startFunctions.sendWebhook()
+                        requestTemplate.body = snapshot
                     } else {
-                        requestTemplate.body['snapshot'] = startFunctions.sendWebhook()
+                        requestTemplate.body['snapshot'] = snapshot
                     }
                 }
 
@@ -389,6 +394,16 @@ module.exports = {
                     maxContentLength: 5000000,
                     maxBodyLength: 5000000,
                     maxRedirects: 0,
+                }
+
+                if (requestTemplate.authorization.username && requestTemplate.authorization.password) {
+                    if (!_.isString(requestTemplate.authorization.username)) return;
+                    if (!_.isString(requestTemplate.authorization.password)) return;
+                    
+                    requestConfig.auth = {
+                        username: requestTemplate.authorization.username,
+                        password: requestTemplate.authorization.password,
+                    }
                 }
                 
                 const statConfig = {
@@ -535,6 +550,8 @@ module.exports = {
         const startFunctions = {
             startWorkflow: async function() {
                 for (const task of state.workflow.tasks) {
+                    if (!task.active) return;
+                    
                     const requestTemplate = await templateFunctions.templateInputs(task.requestId, task._id, 'tasks')
                     const requestResults = await runFunctions.runRequest(requestTemplate, 'request')
                     processFunctions.processRequestResults(requestResults, task._id, 'tasks')
