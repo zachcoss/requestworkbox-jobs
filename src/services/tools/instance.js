@@ -3,8 +3,6 @@ const
     moment = require('moment'),
     Axios = require('axios'),
     IndexSchema = require('../tools/schema').schema,
-    async = require('async'),
-    asyncEachOf = async.eachSeries,
     Agent = require('agentkeepalive'),
     keepAliveAgent = new Agent({
         maxSockets: 100,
@@ -33,6 +31,16 @@ const
         'http://localhost:3002', 'http://localhost:3002/', // support-api
         'http://localhost:4000', 'http://localhost:4000/', // jobs
         'http://localhost:5000', 'http://localhost:5000/',]; // primitives
+
+function isJSON(string) {
+    try {
+        console.log('incoming string', string)
+        JSON.parse(string)
+        console.log('is json')
+    } catch(err) {
+        console.log('not json')
+    }
+}
 
 module.exports = {
     start: async (queuePayload, queueDoc, messageAction) => {
@@ -112,12 +120,11 @@ module.exports = {
 
                 if (state.queue.storageInstanceId && state.queue.storageInstanceId !== '') {
                     const payloadTaskId = state.workflow.payloads[0]._id
-
                     // pull body payload
                     const bodyPayloadStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: process.env.STORAGE_BUCKET,
-                        Key: `${state.queue.projectId}/workflow-payloads/${state.queue.storageInstanceId}`,
+                        Key: `${state.workflow.projectId}/workflow-payloads/${state.queue.storageInstanceId}`,
                     }).promise()
 
                     // add payload to snapshot
@@ -191,62 +198,74 @@ module.exports = {
                 })
             },
             getRequests: async function() {
-                // Requests
-                await asyncEachOf(state.workflow.tasks, async function (task, index) {
-                    if (!task.requestId || task.requestId === '') return;
-                    if (state.requests[task.requestId]) return;
-                    if (!task.active) return;
+                try {
+                    for (task of state.workflow.tasks) {
+    
+                        if (!task.requestId || task.requestId === '') return
+                        if (state.requests[task.requestId]) return
+                        if (!task.active) return
+    
+                        const request = await IndexSchema.Request.findOne({ _id: task.requestId }).lean()
+                        if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing request execution.')
+    
+                        if (!request.url) return callback('Missing URL.')
+                        if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
+                        if (!validUrl.isWebUri(request.url)) throw new Error('Not valid URL.')
+                        if (_.includes(request.url, 'requestworkbox.com')) {
+                            if (!_.includes(productionUrls, request.url)) throw new Error('Recursive request URLs not allowed.')
+                        }
 
-                    const request = await IndexSchema.Request.findOne({ _id: task.requestId }).lean()
-                    if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing request execution.')
-
-                    if (!request.url) throw new Error('Missing URL.')
-                    if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
-                    if (!validUrl.isWebUri(request.url)) throw new Error('Not valid URL.')
-                    if (_.includes(request.url, 'requestworkbox.com')) {
-                        if (!_.includes(productionUrls), request.url) throw new Error('Recursive URLs not allowed.')
+                        // find storages
+                        await getFunctions.getStorages(request)
+    
+                        state.requests[task.requestId] = request
                     }
 
-                    state.requests[task.requestId] = request
-                }, function (err) {
-                    console.log('Get requests error', err)
-                    throw new Error(`Get requests error: ${err.message}`)
-                })
-                // Webhooks
-                await asyncEachOf(state.workflow.webhooks, async function (webhook, index) {
-                    if (!webhook.requestId || webhook.requestId === '') return;
-                    if (state.requests[webhook.requestId]) return;
-                    if (!task.active) return;
+                    for (webhook of state.workflow.webhooks) {
+                        if (!webhook.requestId || webhook.requestId === '') return;
+                        if (state.requests[webhook.requestId]) return;
+                        if (!task.active) return;
 
-                    const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }).lean()
-                    if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing webhook execution.')
+                        const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }).lean()
+                        if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing webhook execution.')
 
-                    if (!request.url) throw new Error('Missing URL.')
-                    if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
-                    if (!validUrl.isWebUri(request.url)) throw new Error('Not valid URL.')
-                    if (_.includes(request.url, 'requestworkbox.com')) {
-                        if (!_.includes(productionUrls), request.url) throw new Error('Recursive URLs not allowed.')
+                        if (!request.url) throw new Error('Missing URL.')
+                        if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
+                        if (!validUrl.isWebUri(request.url)) throw new Error('Not valid URL.')
+                        if (_.includes(request.url, 'requestworkbox.com')) {
+                            if (!_.includes(productionUrls), request.url) throw new Error('Recursive webhook URLs not allowed.')
+                        }
+
+                        state.requests[webhook.requestId] = request
+                        state.webhookRequestId = webhook.requestId
+                        state.webhookTaskId = webhook._id
                     }
-
-                    state.requests[webhook.requestId] = request
-                    state.webhookRequestId = webhook.requestId
-                    state.webhookTaskId = webhook._id
-                }, function (err) {
+                } catch(err) {
                     console.log('Get requests error', err)
                     throw new Error(`Get requests error: ${err.message}`)
-                })
+                }
             },
             storageRequest: async function(obj) {
-                if (obj.valueType !== 'storage') return;
-                if (state.storages[obj.value]) return;
+                try {
+                    if (obj.valueType !== 'storage') return;
+                    if (state.storages[obj.value]) return;
 
-                const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name').lean()
-                if (storage.preventExecution && storage.preventExecution === true) throw new Error('Preventing storage execution.')
+                    const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name').lean()
+                    if (storage.preventExecution && storage.preventExecution === true) throw new Error('Preventing storage execution.')
 
-                state.storages[obj.value] = storage
+                    await getFunctions.getStorageDetails(storage)
+
+                    state.storages[obj.value] = storage
+                } catch(err) {
+                    console.log('Storage request error', err)
+                    throw new Error(`Storage request error: ${err.message}`)
+                }
             },
-            getStorages: async function() {
-                await asyncEachOf(state.requests, async function(request) {
+            getStorages: async function(request) {
+                try {
+                    for (const obj of request.authorization) {
+                        await getFunctions.storageRequest(obj)
+                    }
                     for (const obj of request.query) {
                         await getFunctions.storageRequest(obj)
                     }
@@ -256,27 +275,28 @@ module.exports = {
                     for (const obj of request.body) {
                         await getFunctions.storageRequest(obj)
                     }
-                }, function (err) {
+                } catch(err) {
                     console.log('Get storages error', err)
                     throw new Error(`Get storages error: ${err.message}`)
-                })
+                }
             },
-            getStorageDetails: async function() {
-                await asyncEachOf(state.storages, async function(storage) {
+            getStorageDetails: async function(storage) {
+                try {
                     const storageValueStart = new Date()
                     const storageValue = await S3.getObject({
                         Bucket: process.env.STORAGE_BUCKET,
                         Key: `${state.instance.projectId}/storage-data/${storage._id}`,
                     }).promise()
 
+                    const storageValueString = String(storageValue.Body)
+
                     if (storage.storageType === 'text') {
-                        const fullStorageValue = String(storageValue.Body)
-                        storage.storageValue = fullStorageValue
+                        storage.storageValue = storageValueString
                     } else if (storage.storageType === 'file') {
-                        if (storage.mimetype === 'text/plain') {
-                            storage.storageValue = String(storageValue.Body)
-                        } else if (storage.mimetype === 'application/json') {
-                            storage.storageValue = JSON.parse(storageValue.Body)
+                        if (isJSON(storageValueString)) {
+                            storage.storageValue = JSON.parse(storageValueString)
+                        } else {
+                            storage.storageValue = storageValueString
                         }
                     }
 
@@ -303,7 +323,10 @@ module.exports = {
                     }]
         
                     await Stats.updateInstanceUsage({ instance: state.instance, usages, }, IndexSchema)
-                })
+                } catch(err) {
+                    console.log('Get storage details error', err)
+                    throw new Error(`Get storage details error: ${err.message}`)
+                }
             }
         }
 
@@ -565,9 +588,11 @@ module.exports = {
                 processFunctions.processRequestResults(requestResults, state.webhookTaskId, 'webhooks')
             },
             sendSnapshot: async function() {
-                const publicUserObject = _.pick(state.queue, ['publicUser'])
+                const 
+                    publicUserObject = _.pick(state.queue, ['publicUser']),
+                    publicUser = publicUserObject['publicUser'];
 
-                if (publicUserObject && publicUserObject['publicUser'] && publicUserObject['publicUser'] === false) {
+                if (_.isBoolean(publicUser) && !publicUser) {
                     const member = await IndexSchema.Member.findOne({
                         sub: state.instance.sub,
                         projectId: state.instance.projectId,
@@ -577,20 +602,24 @@ module.exports = {
                     if (member.status !== 'accepted') throw new Error('Snapshot permission error.')
                     if (member.permission === 'none') throw new Error('Snapshot permission error.')
 
-                    if (member.permission === 'write') return snapshot
-                    if (member.permission === 'read') return _.map(snapshot, (snapshotArray) => {
-                        return _.map(snapshotArray, (task) => {
-                            return { taskId: task.taskId, requestName: task.requestName }
+                    if (member.permission === 'read') {
+                        _.each(snapshot, (snapshotArray) => {
+                            _.each(snapshotArray, (task) => {
+                                task = { taskId: task.taskId, requestName: task.requestName }
+                            })
                         })
-                    })
 
-                    return snapshot
-                } else {
-                    return _.map(snapshot, (snapshotArray) => {
-                        return _.map(snapshotArray, (task) => {
-                            return { requestName: task.requestName }
+                        return snapshot
+                    } else if (member.permission === 'write') {
+                        return snapshot
+                    }
+                } else if (_.isBoolean(publicUser) && publicUser) {
+                    _.each(snapshot, (snapshotArray) => {
+                        _.each(snapshotArray, (task) => {
+                            task = { requestName: task.requestName }
                         })
                     })
+                    return snapshot
                 }
             },
         }
@@ -610,8 +639,6 @@ module.exports = {
             await Stats.updateQueueStats({ queue: state.queue, status: 'loading', }, IndexSchema, socketService)
             
             await getFunctions.getRequests()
-            await getFunctions.getStorages()
-            await getFunctions.getStorageDetails()
             await queueFunctions.getBodyPayload()
 
             await Stats.updateQueueStats({ queue: state.queue, status: 'running', }, IndexSchema, socketService)
@@ -643,7 +670,8 @@ module.exports = {
             // Initialize and set snapshot data
             await init()
 
-            return sendSnapshot()
+            const finalSnapshot = await startFunctions.sendSnapshot()
+            return finalSnapshot
             
         } catch(err) {
             console.log('err', err.message || err.response || err)
@@ -670,7 +698,9 @@ module.exports = {
                     }
                 } else {
                     await Stats.updateQueueStats({ queue: state.queue, status: 'error', statusText: err.message }, IndexSchema, socketService)
-                    return sendSnapshot()
+                    
+                    const finalSnapshot = await startFunctions.sendSnapshot()
+                    return finalSnapshot
                 }
             }
         }
