@@ -1,3 +1,5 @@
+const { over } = require('lodash');
+
 const
     _ = require('lodash'),
     moment = require('moment'),
@@ -32,16 +34,6 @@ const
         'http://localhost:4000', 'http://localhost:4000/', // jobs
         'http://localhost:5000', 'http://localhost:5000/',]; // primitives
 
-function isJSON(string) {
-    try {
-        console.log('incoming string', string)
-        JSON.parse(string)
-        console.log('is json')
-    } catch(err) {
-        console.log('not json')
-    }
-}
-
 module.exports = {
     start: async (queuePayload, queueDoc, messageAction) => {
 
@@ -70,7 +62,7 @@ module.exports = {
             throw new Error('Request is running')
         }
 
-        const snapshot = {
+        let snapshot = {
             payloads: [],
             tasks: [],
             webhooks: [],
@@ -88,7 +80,7 @@ module.exports = {
 
         const queueFunctions = {
             getQueue: async function() {
-                const queue = await IndexSchema.Queue.findById(incoming.queueId)
+                const queue = await IndexSchema.Queue.findOne({ _id: incoming.queueId, })
                 state.queue = queue
             },
             processQueue: async function() {
@@ -186,8 +178,8 @@ module.exports = {
                 state.instance = instance
             },
             getWorkflow: async function() {
-                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId }).lean()
-                if (workflow.preventExecution && workflow.preventExecution === true) throw new Error('Preventing workflow execution.')
+                const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId, projectId: state.instance.projectId }).lean()
+                if (_.isBoolean(workflow.preventExecution) && workflow.preventExecution) throw new Error('Preventing workflow execution.')
 
                 state.workflow = workflow
 
@@ -205,8 +197,8 @@ module.exports = {
                         if (state.requests[task.requestId]) return
                         if (!task.active) return
     
-                        const request = await IndexSchema.Request.findOne({ _id: task.requestId }).lean()
-                        if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing request execution.')
+                        const request = await IndexSchema.Request.findOne({ _id: task.requestId, projectId: state.instance.projectId, }).lean()
+                        if (_.isBoolean(request.preventExecution) && request.preventExecution) throw new Error('Preventing request execution.')
     
                         if (!request.url) return callback('Missing URL.')
                         if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
@@ -226,8 +218,8 @@ module.exports = {
                         if (state.requests[webhook.requestId]) return;
                         if (!task.active) return;
 
-                        const request = await IndexSchema.Request.findOne({ _id: webhook.requestId }).lean()
-                        if (request.preventExecution && request.preventExecution === true) throw new Error('Preventing webhook execution.')
+                        const request = await IndexSchema.Request.findOne({ _id: webhook.requestId, projectId: state.instance.projectId }).lean()
+                        if (_.isBoolean(request.preventExecution) && request.preventExecution) throw new Error('Preventing webhook execution.')
 
                         if (!request.url) throw new Error('Missing URL.')
                         if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
@@ -250,8 +242,8 @@ module.exports = {
                     if (obj.valueType !== 'storage') return;
                     if (state.storages[obj.value]) return;
 
-                    const storage = await IndexSchema.Storage.findOne({ _id: obj.value }, 'storageType mimetype size name').lean()
-                    if (storage.preventExecution && storage.preventExecution === true) throw new Error('Preventing storage execution.')
+                    const storage = await IndexSchema.Storage.findOne({ _id: obj.value, projectId: state.instance.projectId }).lean()
+                    if (_.isBoolean(storage.preventExecution) && storage.preventExecution) throw new Error('Preventing storage execution.')
 
                     await getFunctions.getStorageDetails(storage)
 
@@ -288,19 +280,17 @@ module.exports = {
                         Key: `${state.instance.projectId}/storage-data/${storage._id}`,
                     }).promise()
 
-                    const storageValueString = String(storageValue.Body)
+                    const storageValueSize = storageValue.Body.byteLength
 
                     if (storage.storageType === 'text') {
-                        storage.storageValue = storageValueString
+                        storage.storageValue = String(storageValue.Body)
                     } else if (storage.storageType === 'file') {
-                        if (isJSON(storageValueString)) {
-                            storage.storageValue = JSON.parse(storageValueString)
-                        } else {
-                            storage.storageValue = storageValueString
+                        try {
+                            storage.storageValue = JSON.parse(storageValue.Body)
+                        } catch(err) {
+                            storage.storageValue = String(storageValue.Body)
                         }
                     }
-
-                    const storageValueSize = Buffer.byteLength(JSON.stringify(storage.storageValue), 'utf8')
 
                     const usages = [{
                         sub: state.instance.sub,
@@ -347,7 +337,7 @@ module.exports = {
                 }
 
                 const request = state.requests[requestId]
-                if (request.sensitiveResponse && requestTemplate.sensitiveResponse === true) requestTemplate.sensitiveResponse = true
+                if (_.isBoolean(request.sensitiveResponse) && request.sensitiveResponse) requestTemplate.sensitiveResponse = true
 
                 const requestDetails = _.pick(request, ['authorization','query','headers','body'])
 
@@ -374,15 +364,15 @@ module.exports = {
                             let taskId = state.runtimeResultNames[requestDetailObj.value]
 
                             _.each(snapshot.tasks, (taskObj) => {
-                                if (taskObj._id === taskId && taskObj.responsePayload) {
-                                    requestTemplate[requestDetailKey][requestDetailObj.key] = taskObj.responsePayload
+                                if (taskObj.taskId === taskId && taskObj.response) {
+                                    requestTemplate[requestDetailKey][requestDetailObj.key] = taskObj.response
                                 }
                             })
                         } else if (requestDetailObj.valueType === 'incomingField') {
                             const incomingFieldName = requestDetailObj.value
                             _.each(snapshot.payloads, (payloadObj) => {
-                                if (payloadObj.responsePayload && payloadObj.responsePayload[incomingFieldName]) {
-                                    requestTemplate[requestDetailKey][requestDetailObj.key] = payloadObj.responsePayload[incomingFieldName]
+                                if (payloadObj.response && payloadObj.response[incomingFieldName]) {
+                                    requestTemplate[requestDetailKey][requestDetailObj.key] = payloadObj.response[incomingFieldName]
                                 }
                             })
                         }
@@ -436,7 +426,7 @@ module.exports = {
                     requestId: requestTemplate.requestId,
                     taskId: requestTemplate.taskId,
                     taskField: requestTemplate.taskField,
-                    requestPayload: requestConfig,
+                    requestPayload: _.omit(requestConfig, ['timeout','maxContentLength','maxBodyLength','maxRedirects']),
                     responsePayload: {},
                     status: 0,
                     statusText: '',
@@ -534,7 +524,7 @@ module.exports = {
         const statFunctions = {
             createStat: async function(statConfig) {
                 try {
-                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET)
+                    await Stats.updateInstanceStats({ instance: state.instance, statConfig, }, IndexSchema, S3, process.env.STORAGE_BUCKET, socketService)
                 } catch(err) {
                     console.log('create stat error', err)
                     throw new Error('Error creating stat')
@@ -549,21 +539,36 @@ module.exports = {
                 let data = {
                     taskId: taskId,
                     requestName: requestResults.requestName || '',
+                    status: requestResults.status,
                 }
 
-                if (taskField === 'payloads') {
-                    if (!requestResults) data.response = 'Response error: missing data.'
+                if (_.isBoolean(requestResults.sensitiveResponse) && requestResults.sensitiveResponse) data.sensitiveResponse = true
 
-                    if (over1MB) data.response = 'Response snapshot error: 1MB max response limit.'
-                    else data.response = requestResults
+                if (taskField === 'payloads') {
+                    if (!requestResults) {
+                        data.error = true
+                        data.errorMessage = 'Response error: missing data.'
+                    }
+
+                    if (over1MB) {
+                        data.error = true
+                        data.errorMessage = 'Response snapshot error: 1MB max response limit.'
+                    } else {
+                        data.response = requestResults
+                    }
                 }
 
                 if (taskField === 'webhooks' || taskField === 'tasks') {
-                    if (!requestResults.data) data.response = 'Response error: missing data.'
-                    if (requestResults.sensitiveResponse && requestResults.sensitiveResponse === true) data.response = 'Response redacted.'
-                    
-                    if (over1MB) data.response = 'Response snapshot error: 1MB max response limit.'
-                    else data.response = requestResults.data
+                    if (!requestResults.data) {
+                        data.error = true
+                        data.errorMessage = 'Response error: missing data.'
+                    }   
+                    if (over1MB) {
+                        data.error = true
+                        data.errorMessage = 'Response snapshot error: 1MB max response limit.'
+                    } else {
+                        data.response = requestResults.data
+                    }
                 }
 
                 snapshot[taskField].push(data)
@@ -602,25 +607,34 @@ module.exports = {
                     if (member.status !== 'accepted') throw new Error('Snapshot permission error.')
                     if (member.permission === 'none') throw new Error('Snapshot permission error.')
 
-                    if (member.permission === 'read') {
-                        _.each(snapshot, (snapshotArray) => {
-                            _.each(snapshotArray, (task) => {
-                                task = { taskId: task.taskId, requestName: task.requestName }
-                            })
-                        })
+                    snapshot = _.mapValues(snapshot, (snapshotArray) => {
+                        snapshotArray = _.map(snapshotArray, (task) => {
+                            if (task.sensitiveResponse) {
+                                if (member.permission === 'read' && !member.includeSensitive) task = _.pick(task, ['taskId', 'requestName', 'status', 'error', 'errorMessage'])
+                                else task = _.pick(task, ['taskId', 'requestName', 'status', 'error', 'errorMessage', 'response'])
+                                return task
+                            }
 
-                        return snapshot
-                    } else if (member.permission === 'write') {
-                        return snapshot
-                    }
+                            task = _.pick(task, ['taskId', 'requestName', 'status', 'error', 'errorMessage', 'response'])
+                            return task
+                        })
+                        return snapshotArray
+                    })
+
+                    snapshot.queueId = state.queue._id
+                    snapshot.instanceId = state.instance._id
+
+                    return snapshot
+
                 } else if (_.isBoolean(publicUser) && publicUser) {
                     _.each(snapshot, (snapshotArray) => {
                         _.each(snapshotArray, (task) => {
-                            task = { requestName: task.requestName }
+                            task = _.pick(task, ['response','sensitiveResponse','taskId'])
                         })
                     })
                     return snapshot
                 }
+                
             },
         }
 

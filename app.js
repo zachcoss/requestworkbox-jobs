@@ -25,7 +25,9 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors({
-    origin: ['https://api.requestworkbox.com'],
+    // redirects change origin to null in-browser
+    // setting origin to true to support return workflow and return request
+    origin: true,
     methods: ['GET','POST'],
     allowedHeaders: ['authorization','content-type'],
     exposedHeaders: [],
