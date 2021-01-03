@@ -61,18 +61,6 @@ module.exports = {
             return res.status(500).send('ERROR')
         }
     },
-    validateOrigin: async function (req, res, next) {
-        try {
-            const origin = `${req.protocol}://${req.hostname}`
-            const allowOrigin = process.env.NODE_ENV === 'production' ? 'https://api.requestworkbox.com' : 'http://localhost'
-            
-            if (origin !== allowOrigin) throw new Error()
-            else return next()
-        } catch (err) {
-            console.log('Validate origin error', err)
-            return res.status(401).send('Error validating origin.')
-        }
-    },
     interceptor: async function (req, res, next) {
         try {
             if (req.user && req.user.sub && _.isString(req.user.sub)) return next()

@@ -8,7 +8,6 @@ module.exports.config = function () {
 
     router.all('*', indexMiddleware.ratelimit)
     router.get('/', indexMiddleware.healthcheck)
-    router.all('*', indexMiddleware.validateOrigin)
     router.all('*', indexMiddleware.interceptor)
 
     router.get('/return-workflow', Instance.returnWorkflow)
