@@ -70,6 +70,7 @@ module.exports = {
 
                 return next()
             } else {
+                if (req.path === '/return-workflow') return next()
                 return res.status(401).send('Authorization not found.')
             }
         } catch (err) {

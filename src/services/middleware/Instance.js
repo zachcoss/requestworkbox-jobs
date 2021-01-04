@@ -14,12 +14,11 @@ module.exports = {
             }
 
             // find queue
-            const findPayload = { _id: req.query.queueid, sub: req.user.sub, status: 'pending', }
+            const findPayload = { _id: req.query.queueid, status: 'pending', }
             const queue = await IndexSchema.Queue.findOne(findPayload)
 
-            if (!queue || !queue._id) {
-                return res.status(400).send('Queue not found.')
-            }
+            if (!queue || !queue._id) return res.status(400).send('Queue not found.')
+            if (queue.queueType !== 'return') return res.status(400).send('Incorrect queue type.')
 
             // Create Queue Pending Stat
             await Stats.updateQueueStats({ queue, status: 'queued', }, IndexSchema, socketService)

@@ -597,7 +597,13 @@ module.exports = {
                     publicUserObject = _.pick(state.queue, ['publicUser']),
                     publicUser = publicUserObject['publicUser'];
 
+                let finalSnapshot = {
+                    payloads: [],
+                    tasks: [],
+                }
+
                 if (_.isBoolean(publicUser) && !publicUser) {
+
                     const member = await IndexSchema.Member.findOne({
                         sub: state.instance.sub,
                         projectId: state.instance.projectId,
@@ -607,32 +613,30 @@ module.exports = {
                     if (member.status !== 'accepted') throw new Error('Snapshot permission error.')
                     if (member.permission === 'none') throw new Error('Snapshot permission error.')
 
-                    snapshot = _.mapValues(snapshot, (snapshotArray) => {
-                        snapshotArray = _.map(snapshotArray, (task) => {
-                            if (task.sensitiveResponse) {
-                                if (member.permission === 'read' && !member.includeSensitive) task = _.pick(task, ['taskId', 'requestName', 'status', 'error', 'errorMessage'])
-                                else task = _.pick(task, ['taskId', 'requestName', 'status', 'error', 'errorMessage', 'response'])
-                                return task
-                            }
+                    finalSnapshot.queueId = state.queue._id
+                    finalSnapshot.instanceId = state.instance._id
 
-                            task = _.pick(task, ['taskId', 'requestName', 'status', 'error', 'errorMessage', 'response'])
-                            return task
-                        })
-                        return snapshotArray
+                    _.each(snapshot.payloads, (payload) => {
+                        finalSnapshot.payloads.push(_.pick(payload, ['response','error','errorMessage']))
                     })
 
-                    snapshot.queueId = state.queue._id
-                    snapshot.instanceId = state.instance._id
+                    _.each(snapshot.tasks, (task) => {
+                        if (task.sensitiveResponse) {
+                            if (member.permission === 'read' && !member.includeSensitive) return finalSnapshot.tasks.push(_.pick(task, ['taskId','requestName','status','error','errorMessage']))
+                        }
 
-                    return snapshot
+                        finalSnapshot.tasks.push(_.pick(task, ['taskId','requestName','status','error', 'errorMessage', 'response']))
+                    })
+
+                    return finalSnapshot
 
                 } else if (_.isBoolean(publicUser) && publicUser) {
-                    _.each(snapshot, (snapshotArray) => {
-                        _.each(snapshotArray, (task) => {
-                            task = _.pick(task, ['response','sensitiveResponse','taskId'])
-                        })
+
+                    _.each(snapshot.tasks, (task) => {
+                        finalSnapshot.tasks.push(_.pick(task, ['requestName','status','error','errorMessage','response']))
                     })
-                    return snapshot
+
+                    return finalSnapshot
                 }
                 
             },
