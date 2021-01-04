@@ -81,6 +81,8 @@ module.exports = {
         const queueFunctions = {
             getQueue: async function() {
                 const queue = await IndexSchema.Queue.findOne({ _id: incoming.queueId, })
+                if (!queue || !queue._id) throw new Error('Queue not found.')
+
                 state.queue = queue
             },
             processQueue: async function() {
@@ -175,11 +177,15 @@ module.exports = {
         const getFunctions = {
             getInstance: async function() {
                 const instance = await IndexSchema.Instance.findOne({ _id: state.queue.instanceId, sub: state.queue.sub })
+                if (!instance || !instance._id) throw new Error('Instance not found.')
+
                 state.instance = instance
             },
             getWorkflow: async function() {
                 const workflow = await IndexSchema.Workflow.findOne({ _id: state.instance.workflowId, projectId: state.instance.projectId }).lean()
-                if (_.isBoolean(workflow.preventExecution) && workflow.preventExecution) throw new Error('Preventing workflow execution.')
+                if (!workflow || !workflow._id) throw new Error('Workflow not found.')
+
+                if (workflow && _.isBoolean(workflow.preventExecution) && workflow.preventExecution) throw new Error('Preventing workflow execution.')
 
                 state.workflow = workflow
 
@@ -198,7 +204,9 @@ module.exports = {
                         if (!task.active) return
     
                         const request = await IndexSchema.Request.findOne({ _id: task.requestId, projectId: state.instance.projectId, }).lean()
-                        if (_.isBoolean(request.preventExecution) && request.preventExecution) throw new Error('Preventing request execution.')
+                        if (!request || !request._id) throw new Error('Request not found.')
+
+                        if (request && _.isBoolean(request.preventExecution) && request.preventExecution) throw new Error('Preventing request execution.')
     
                         if (!request.url) return callback('Missing URL.')
                         if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
@@ -219,7 +227,9 @@ module.exports = {
                         if (!task.active) return;
 
                         const request = await IndexSchema.Request.findOne({ _id: webhook.requestId, projectId: state.instance.projectId }).lean()
-                        if (_.isBoolean(request.preventExecution) && request.preventExecution) throw new Error('Preventing webhook execution.')
+                        if (!request || !request._id) throw new Error('Webhook not found.')
+
+                        if (request && _.isBoolean(request.preventExecution) && request.preventExecution) throw new Error('Preventing webhook execution.')
 
                         if (!request.url) throw new Error('Missing URL.')
                         if (!/^https?:\/\//.test(request.url)) throw new Error('Must be secure URL.')
@@ -243,7 +253,9 @@ module.exports = {
                     if (state.storages[obj.value]) return;
 
                     const storage = await IndexSchema.Storage.findOne({ _id: obj.value, projectId: state.instance.projectId }).lean()
-                    if (_.isBoolean(storage.preventExecution) && storage.preventExecution) throw new Error('Preventing storage execution.')
+                    if (!storage || !storage._id) throw new Error('Storage not found.')
+
+                    if (storage && _.isBoolean(storage.preventExecution) && storage.preventExecution) throw new Error('Preventing storage execution.')
 
                     await getFunctions.getStorageDetails(storage)
 
@@ -337,7 +349,7 @@ module.exports = {
                 }
 
                 const request = state.requests[requestId]
-                if (_.isBoolean(request.sensitiveResponse) && request.sensitiveResponse) requestTemplate.sensitiveResponse = true
+                if (request && _.isBoolean(request.sensitiveResponse) && request.sensitiveResponse) requestTemplate.sensitiveResponse = true
 
                 const requestDetails = _.pick(request, ['authorization','query','headers','body'])
 
@@ -542,7 +554,7 @@ module.exports = {
                     status: requestResults.status,
                 }
 
-                if (_.isBoolean(requestResults.sensitiveResponse) && requestResults.sensitiveResponse) data.sensitiveResponse = true
+                if (requestResults && _.isBoolean(requestResults.sensitiveResponse) && requestResults.sensitiveResponse) data.sensitiveResponse = true
 
                 if (taskField === 'payloads') {
                     if (!requestResults) {
@@ -598,7 +610,6 @@ module.exports = {
                     publicUser = publicUserObject['publicUser'];
 
                 let finalSnapshot = {
-                    payloads: [],
                     tasks: [],
                 }
 
@@ -617,6 +628,7 @@ module.exports = {
                     finalSnapshot.instanceId = state.instance._id
 
                     _.each(snapshot.payloads, (payload) => {
+                        if (!finalSnapshot.payloads) finalSnapshot.payloads = []
                         finalSnapshot.payloads.push(_.pick(payload, ['response','error','errorMessage']))
                     })
 
